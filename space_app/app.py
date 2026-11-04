@@ -1,14 +1,23 @@
-"""Review-only private ZeroGPU application. No work executes at import/startup."""
+"""Private ZeroGPU chat app. Nothing executes by default.
 
-import hmac
+Two SEPARATE default-disabled approval flags:
+  SPACE_MODEL_INIT_APPROVED=true  -> load Qwen at Space startup (module level, via
+                                     the documented ZeroGPU CUDA emulation)
+  SPACE_EXECUTION_APPROVED=true   -> accept and run signed inference requests
+The Space keeps no quota state. The backend's local ledger is the only counter; the
+Space only checks that each request carries a fresh tag signed with the shared key.
+"""
+
 import os
-from pathlib import Path
+import time
 
 import spaces
 import gradio as gr
 
-# Deployment bundle includes backend/zerogpu.py as zerogpu.py (stdlib only).
-from zerogpu import GenerationUnavailable, QuotaBudget
+# Deployment bundle includes backend/dispatch_auth.py as dispatch_auth.py (stdlib).
+from dispatch_auth import (
+    ID_HEADER, TAG_HEADER, TIME_HEADER, AuthError, verify_dispatch,
+)
 
 MODEL_ID = "Qwen/Qwen2.5-1.5B-Instruct"
 MODEL_REVISION = "989aa7980e4cf806f80c7fef2b1adb7bc71aa306"
@@ -18,97 +27,110 @@ _model = None
 _tokenizer = None
 
 
-def _budget():
-    path = Path(os.environ.get("SPACE_BUDGET_PATH", ""))
-    if not path.is_absolute() or not path.is_file() or path.is_symlink():
-        raise GenerationUnavailable()
-    return QuotaBudget(
-        path, max_attempts=int(os.environ.get("SPACE_MAX_ATTEMPTS", "6"))
+def _load_components():
+    """Startup-only. Under ZeroGPU, .to('cuda') at module level is emulated and
+    allocates no GPU time. Never called by the validator or the GPU handler."""
+    import torch
+    from transformers import AutoModelForCausalLM, AutoTokenizer
+
+    tokenizer = AutoTokenizer.from_pretrained(
+        MODEL_ID, revision=MODEL_REVISION, trust_remote_code=False, token=False,
     )
+    model = AutoModelForCausalLM.from_pretrained(
+        MODEL_ID, revision=MODEL_REVISION, trust_remote_code=False,
+        token=False, use_safetensors=True, dtype=torch.float16,
+    ).to("cuda").eval()
+    return model, tokenizer
 
 
-def _dispatch_id(request):
-    return request.headers.get("x-mm-dispatch-id", "")
+def initialize_model():
+    """Gated, no warm-up generation, no retry. Failure leaves the Space refusing."""
+    global _model, _tokenizer
+    if os.environ.get("SPACE_MODEL_INIT_APPROVED") != "true" or _model is not None:
+        return False
+    try:
+        _model, _tokenizer = _load_components()
+    except Exception:
+        _model = _tokenizer = None  # fail closed; no error text is retained
+        return False
+    return True
+
+
+initialize_model()
+
+
+def _verify(message, max_new_tokens, request):
+    """Local-only check: fresh dispatch signed with the shared key (no network)."""
+    key = os.environ.get("ZEROGPU_BACKEND_KEY", "")
+    headers = request.headers
+    try:
+        issued_at = int(headers.get(TIME_HEADER.lower(), ""))
+    except (TypeError, ValueError):
+        raise AuthError() from None
+    if len(key) < 32 or not verify_dispatch(
+        key, headers.get(ID_HEADER.lower(), ""), issued_at, int(max_new_tokens),
+        message, headers.get(TAG_HEADER.lower(), ""), time.time(),
+    ):
+        raise AuthError()
 
 
 def authorize(message, max_new_tokens, request: gr.Request):
-    """Gradio CPU validator: all checks and durable reservation precede GPU call."""
+    """Gradio CPU validator: every check precedes GPU scheduling."""
     try:
-        expected = os.environ.get("ZEROGPU_BACKEND_KEY", "")
-        supplied = request.headers.get("x-mm-backend-key", "")
         if (
             os.environ.get("SPACE_EXECUTION_APPROVED") != "true"
-            or len(expected) < 32
-            or not isinstance(supplied, str)
-            or not hmac.compare_digest(expected.encode(), supplied.encode())
             or not isinstance(message, str) or not message.strip()
             or len(message) > 4_000
             or type(max_new_tokens) not in (int, float)
             or max_new_tokens != int(max_new_tokens)
             or not 1 <= max_new_tokens <= MAX_OUTPUT_TOKENS
         ):
-            raise GenerationUnavailable()
-        _budget().reserve(reservation_id=_dispatch_id(request))
+            raise AuthError()
+        _verify(message, max_new_tokens, request)
         # Gradio 6 validators must return the validated input values.
         return message, int(max_new_tokens)
     except Exception:
         raise gr.Error("AI generation is disabled or requires operator review.") from None
 
 
-def _load_qwen():
-    """Called only inside an approved GPU job; never during import or validation."""
-    global _model, _tokenizer
-    if _model is None:
-        import torch
-        from transformers import AutoModelForCausalLM, AutoTokenizer
-
-        tokenizer = AutoTokenizer.from_pretrained(
-            MODEL_ID, revision=MODEL_REVISION, trust_remote_code=False, token=False,
-        )
-        model = AutoModelForCausalLM.from_pretrained(
-            MODEL_ID, revision=MODEL_REVISION, trust_remote_code=False,
-            token=False, use_safetensors=True, dtype=torch.float16,
-        ).to("cuda").eval()
-        _model, _tokenizer = model, tokenizer
-    return _model, _tokenizer
-
-
 def _generate_qwen(message, max_new_tokens):
+    """Inference only. The model must already have been loaded at startup."""
     import torch
 
-    model, tokenizer = _load_qwen()
-    text = tokenizer.apply_chat_template(
+    if _model is None or _tokenizer is None:
+        raise AuthError()
+    text = _tokenizer.apply_chat_template(
         [{"role": "user", "content": message}],
         tokenize=False, add_generation_prompt=True,
     )
     # No conversation history; bound tokenized context, never log either text.
-    inputs = tokenizer(
+    inputs = _tokenizer(
         text, return_tensors="pt", truncation=True, max_length=MAX_INPUT_TOKENS,
     ).to("cuda")
     with torch.inference_mode():
-        outputs = model.generate(
+        outputs = _model.generate(
             **inputs, max_new_tokens=int(max_new_tokens), do_sample=False,
-            use_cache=True, pad_token_id=tokenizer.eos_token_id,
+            use_cache=True, pad_token_id=_tokenizer.eos_token_id,
         )
-    return tokenizer.decode(
+    return _tokenizer.decode(
         outputs[0][inputs["input_ids"].shape[-1]:], skip_special_tokens=True,
     ).strip()
 
 
 @spaces.GPU(duration=30, size="large")
 def generate(message, max_new_tokens, request: gr.Request):
-    """Real Qwen handler; only reachable after the CPU validator reserves a job."""
+    """Real handler, bounded to 30 s. No model loading, warm-up or retry here.
+    Re-verifies the signed dispatch locally as defense in depth."""
     try:
-        ledger = _budget()
-        reservation = _dispatch_id(request)
-        ledger.require_active(reservation)
+        if os.environ.get("SPACE_EXECUTION_APPROVED") != "true":
+            raise AuthError()
+        _verify(message, max_new_tokens, request)
         reply = _generate_qwen(message, int(max_new_tokens))
         if not isinstance(reply, str) or not reply.strip() or len(reply) > 8_000:
-            raise GenerationUnavailable()
-        ledger.finish(reservation)
+            raise AuthError()
         return reply
     except Exception:
-        # Do not clear an uncertain reservation or include raw provider/input data.
+        # No raw provider/input data; the backend keeps the attempt spent.
         raise gr.Error("AI generation is unavailable; operator review is required.") from None
 
 
