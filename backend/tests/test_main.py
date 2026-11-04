@@ -1,70 +1,71 @@
+import ast
 import json
 import logging
+from pathlib import Path
 
-import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from main import GROQ_CHAT_URL, create_app
+from main import AI_UNAVAILABLE_MESSAGE, create_app
 from security import hash_password
 
 
-TEST_KEY = "test-key-not-a-real-credential"
 TEST_USER = "test-user"
 TEST_PASSWORD = "fake-test-password-only"
 TEST_PASSWORD_HASH = hash_password(TEST_PASSWORD)
 PRIVATE_MESSAGE = "private test input"
-MODEL_RESPONSE = {
-    "choices": [
-        {
-            "message": {"content": "Hello from Groq.", "role": "assistant"},
-            "finish_reason": "stop",
-        }
-    ]
-}
+# Negative regression fixtures only: none of these settings is read at runtime.
+RETIRED_SETTINGS = (
+    "GROQ_API_KEY", "GROQ_MODEL", "GROQ_FREE_PLAN_CONFIRMED",
+    "GROQ_TIMEOUT_SECONDS", "GROQ_MAX_COMPLETION_TOKENS",
+    "GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_TIMEOUT_SECONDS",
+)
 
 
 @pytest.fixture(autouse=True)
 def configure(monkeypatch):
-    monkeypatch.setenv("GROQ_API_KEY", TEST_KEY)
-    monkeypatch.setenv("GROQ_MODEL", "openai/test-model")
-    monkeypatch.setenv("GROQ_FREE_PLAN_CONFIRMED", "true")
-    monkeypatch.setenv("GROQ_TIMEOUT_SECONDS", "30")
-    monkeypatch.setenv("GROQ_MAX_COMPLETION_TOKENS", "512")
+    for name in RETIRED_SETTINGS:
+        monkeypatch.delenv(name, raising=False)
     monkeypatch.setenv("CHAT_AUTH_USERS", json.dumps({TEST_USER: TEST_PASSWORD_HASH}))
     monkeypatch.setenv("CHAT_RATE_LIMIT_REQUESTS", "1000")
     monkeypatch.setenv("CHAT_RATE_LIMIT_WINDOW_SECONDS", "60")
 
 
-def authenticated_client(app):
-    client = TestClient(app)
+def authenticated_client():
+    client = TestClient(create_app())
     client.auth = (TEST_USER, TEST_PASSWORD)
     return client
 
 
-def test_chat_sends_message_server_side_and_returns_model_text():
-    observed = []
+@pytest.mark.parametrize("message", ["Hello", "  Hello  ", "اشرح معنى API", "x" * 4000])
+def test_valid_chat_is_explicitly_unavailable_without_any_provider_key(message, caplog):
+    with caplog.at_level(logging.INFO):
+        response = authenticated_client().post("/chat", json={"message": message})
+    assert response.status_code == 503
+    assert response.json() == {"detail": AI_UNAVAILABLE_MESSAGE}
+    assert "currently unavailable" in response.json()["detail"]
+    assert "no AI service is configured" in response.json()["detail"]
+    assert "reply" not in response.json()
+    assert response.headers["cache-control"] == "no-store"
+    assert "retry-after" not in response.headers
+    assert TEST_PASSWORD not in response.text + caplog.text
+    assert message not in response.text + caplog.text
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        observed.append(request)
-        return httpx.Response(200, json=MODEL_RESPONSE)
 
-    client = authenticated_client(create_app(httpx.MockTransport(handler)))
-    response = client.post("/chat", json={"message": "  Hello  "})
-
-    assert response.status_code == 200
-    assert response.json() == {"reply": "Hello from Groq."}
-    assert len(observed) == 1
-    request = observed[0]
-    assert str(request.url) == GROQ_CHAT_URL
-    assert request.headers["authorization"] == f"Bearer {TEST_KEY}"
-    assert json.loads(request.content) == {
-        "model": "openai/test-model",
-        "messages": [{"role": "user", "content": "Hello"}],
-        "max_completion_tokens": 512,
-        "stream": False,
-    }
-    assert TEST_KEY not in str(request.url)
+@pytest.mark.parametrize("legacy_present", [False, True])
+def test_no_external_provider_is_contacted_even_with_leftover_settings(
+    monkeypatch, no_outbound_network, legacy_present
+):
+    if legacy_present:
+        for name in RETIRED_SETTINGS:
+            monkeypatch.setenv(name, "synthetic-retired-setting-not-a-secret")
+    client = authenticated_client()
+    for _ in range(3):
+        response = client.post("/chat", json={"message": PRIVATE_MESSAGE})
+        assert response.status_code == 503
+        assert response.json() == {"detail": AI_UNAVAILABLE_MESSAGE}
+    assert no_outbound_network == []
+    assert "synthetic-retired-setting" not in response.text
 
 
 @pytest.mark.parametrize(
@@ -73,13 +74,9 @@ def test_chat_sends_message_server_side_and_returns_model_text():
      {"message": 123}, {"message": ["private"]}, {"message": "private-text-" * 400}],
 )
 def test_invalid_messages_are_rejected_without_echoing_input(payload):
-    calls = []
-    client = authenticated_client(create_app(httpx.MockTransport(lambda r: calls.append(r))))
-
-    response = client.post("/chat", json=payload)
-
+    response = authenticated_client().post("/chat", json=payload)
     assert response.status_code == 422
-    assert calls == []
+    assert response.headers["cache-control"] == "no-store"
     assert "private" not in response.text
     for error in response.json()["detail"]:
         assert "input" not in error
@@ -87,144 +84,47 @@ def test_invalid_messages_are_rejected_without_echoing_input(payload):
 
 
 def test_malformed_json_does_not_echo_input():
-    response = authenticated_client(create_app()).post(
+    response = authenticated_client().post(
         "/chat", content='{"message":"private', headers={"Content-Type": "application/json"}
     )
     assert response.status_code == 422
     assert "private" not in response.text
+    assert response.headers["cache-control"] == "no-store"
 
 
-@pytest.mark.parametrize("name", ["GROQ_API_KEY", "GROQ_MODEL"])
-def test_missing_configuration_never_calls_provider(monkeypatch, name):
-    monkeypatch.delenv(name)
-    calls = []
-    client = authenticated_client(create_app(httpx.MockTransport(lambda r: calls.append(r))))
-    response = client.post("/chat", json={"message": PRIVATE_MESSAGE})
-    assert response.status_code == 503
-    assert calls == []
+def test_openapi_preserves_request_contract_and_documents_unavailability():
+    schema = TestClient(create_app()).get("/openapi.json").json()
+    route = schema["paths"]["/chat"]["post"]
+    request = schema["components"]["schemas"]["ChatRequest"]
+    assert request["required"] == ["message"]
+    assert request["properties"]["message"]["type"] == "string"
+    assert request["properties"]["message"]["maxLength"] == 4000
+    assert route["security"] == [{"HTTPBasic": []}]
+    assert route["responses"]["503"]["description"] == AI_UNAVAILABLE_MESSAGE
 
 
-@pytest.mark.parametrize("confirmed", ["", "false", "yes", "1"])
-def test_free_plan_guard_fails_closed(monkeypatch, confirmed):
-    monkeypatch.setenv("GROQ_FREE_PLAN_CONFIRMED", confirmed)
-    calls = []
-    client = authenticated_client(create_app(httpx.MockTransport(lambda r: calls.append(r))))
-    response = client.post("/chat", json={"message": PRIVATE_MESSAGE})
-    assert response.status_code == 503
-    assert calls == []
-
-
-@pytest.mark.parametrize(
-    "name,value",
-    [
-        ("GROQ_MODEL", "https://other.example/model"),
-        ("GROQ_MODEL", "model:fastest"),
-        ("GROQ_MODEL", "../model"),
-        ("GROQ_TIMEOUT_SECONDS", "nan"),
-        ("GROQ_TIMEOUT_SECONDS", "inf"),
-        ("GROQ_TIMEOUT_SECONDS", "0"),
-        ("GROQ_TIMEOUT_SECONDS", "121"),
-        ("GROQ_TIMEOUT_SECONDS", "invalid"),
-        ("GROQ_MAX_COMPLETION_TOKENS", "0"),
-        ("GROQ_MAX_COMPLETION_TOKENS", "1025"),
-        ("GROQ_MAX_COMPLETION_TOKENS", "1.5"),
-    ],
-)
-def test_invalid_configuration_never_calls_provider(monkeypatch, name, value):
-    monkeypatch.setenv(name, value)
-    calls = []
-    client = authenticated_client(create_app(httpx.MockTransport(lambda r: calls.append(r))))
-    response = client.post("/chat", json={"message": PRIVATE_MESSAGE})
-    assert response.status_code == 503
-    assert calls == []
-
-
-@pytest.mark.parametrize(
-    "status,expected",
-    [(400, 502), (401, 503), (402, 503), (403, 503), (404, 503),
-     (413, 502), (422, 502), (429, 429), (500, 502), (502, 502), (503, 503)],
-)
-def test_provider_failures_are_sanitized_without_retry(status, expected, caplog):
-    calls = []
-
-    def handler(request):
-        calls.append(request)
-        return httpx.Response(
-            status,
-            json={"error": {"message": f"{TEST_KEY} {PRIVATE_MESSAGE} sensitive upstream"}},
-        )
-
-    with caplog.at_level(logging.INFO):
-        response = authenticated_client(create_app(httpx.MockTransport(handler))).post(
-            "/chat", json={"message": PRIVATE_MESSAGE}
-        )
-
-    assert response.status_code == expected
-    assert len(calls) == 1
-    assert f"status={status}" in caplog.text
-    for secret in (TEST_KEY, PRIVATE_MESSAGE, "sensitive upstream"):
-        assert secret not in response.text
-        assert secret not in caplog.text
-
-
-@pytest.mark.parametrize(
-    "exception,expected", [(httpx.ReadTimeout, 504), (httpx.ConnectError, 502)]
-)
-def test_transport_failures_are_sanitized_without_retry(exception, expected, caplog):
-    calls = []
-
-    def handler(request):
-        calls.append(request)
-        raise exception(f"{TEST_KEY} {PRIVATE_MESSAGE}", request=request)
-
-    with caplog.at_level(logging.INFO):
-        response = authenticated_client(create_app(httpx.MockTransport(handler))).post(
-            "/chat", json={"message": PRIVATE_MESSAGE}
-        )
-
-    assert response.status_code == expected
-    assert len(calls) == 1
-    for secret in (TEST_KEY, PRIVATE_MESSAGE):
-        assert secret not in response.text
-        assert secret not in caplog.text
-
-
-@pytest.mark.parametrize(
-    "body",
-    [
-        {}, None, [], {"choices": []}, {"choices": [None]},
-        {"choices": [{"message": {"content": None}, "finish_reason": "stop"}]},
-        {"choices": [{"message": {"content": 12}, "finish_reason": "stop"}]},
-        {"choices": [{"message": {"content": " "}, "finish_reason": "stop"}]},
-        {"choices": [{"message": {"content": "partial"}, "finish_reason": "length"}]},
-        {"choices": [{"message": {"content": "unsafe"}, "finish_reason": "content_filter"}]},
-        {"choices": [{"message": {"reasoning": PRIVATE_MESSAGE}, "finish_reason": "stop"}]},
-    ],
-)
-def test_invalid_or_incomplete_provider_response_is_sanitized(body):
-    transport = httpx.MockTransport(lambda r: httpx.Response(200, content=json.dumps(body)))
-    response = authenticated_client(create_app(transport)).post("/chat", json={"message": PRIVATE_MESSAGE})
-    assert response.status_code == 502
-    assert PRIVATE_MESSAGE not in response.text
-    assert "Traceback" not in response.text
-
-
-def test_non_json_response_is_sanitized():
-    transport = httpx.MockTransport(lambda r: httpx.Response(200, text=PRIVATE_MESSAGE))
-    response = authenticated_client(create_app(transport)).post("/chat", json={"message": PRIVATE_MESSAGE})
-    assert response.status_code == 502
-    assert PRIVATE_MESSAGE not in response.text
-
-
-def test_redirect_is_not_followed():
-    calls = []
-
-    def handler(request):
-        calls.append(request)
-        return httpx.Response(307, headers={"location": "https://other.example/"})
-
-    response = authenticated_client(create_app(httpx.MockTransport(handler))).post(
-        "/chat", json={"message": PRIVATE_MESSAGE}
-    )
-    assert response.status_code == 502
-    assert len(calls) == 1
+def test_runtime_and_template_have_no_provider_configuration_or_client():
+    backend = Path(__file__).resolve().parents[1]
+    for path in backend.glob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                modules = [alias.name.split(".")[0] for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                modules = [(node.module or "").split(".")[0]]
+            else:
+                continue
+            assert not set(modules) & {
+                "httpx", "requests", "urllib", "aiohttp", "groq", "google", "openai"
+            }
+        text = path.read_text().lower()
+        assert "https://" not in text
+        assert "groq" not in text
+        assert "gemini" not in text
+    template = (backend / ".env.example").read_text()
+    requirements = (backend / "requirements.txt").read_text().lower()
+    for name in RETIRED_SETTINGS:
+        assert name not in template
+    assert "httpx" not in requirements
+    assert "groq" not in requirements
+    assert "gemini" not in requirements
