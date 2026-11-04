@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Masari — Week 5 Backend Demo</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, sans-serif; }
+    body { max-width: 780px; margin: 32px auto; padding: 0 16px; background: #101827; color: #e7edf8; }
+    h1 { margin-bottom: 4px; } p { color: #b8c3d4; }
+    label { display: block; margin: 12px 0 5px; }
+    input, textarea { width: 100%; box-sizing: border-box; padding: 12px; border-radius: 9px; background: #1b283c; border: 1px solid #4a5a72; color: white; font: inherit; }
+    textarea { min-height: 100px; }
+    button { margin-top: 12px; padding: 11px 20px; border: 0; border-radius: 8px; background: #68b4ff; color: #061525; font: inherit; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: wait; }
+    #output { padding: 16px; min-height: 100px; margin-top: 18px; background: #182338; border-radius: 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+    #status { margin-top: 14px; }
+  </style>
+</head>
+<body>
+  <h1>Masari Chatbot</h1>
+  <p>Week 5 demo — the browser calls our FastAPI backend, which calls the AI model.</p>
+  <form id="form">
+    <label for="username">Demo username</label><input id="username" autocomplete="username" required>
+    <label for="password">Demo password</label><input id="password" type="password" autocomplete="current-password" required>
+    <label for="message">Your message</label><textarea id="message" maxlength="4000" required placeholder="Hello! What can you help me with?"></textarea>
+    <button id="send" type="submit">Send to backend</button>
+  </form>
+  <div id="status" role="status" aria-live="polite"></div>
+  <div id="output" role="log" aria-live="polite">The model reply will appear here.</div>
+<script>
+const form = document.getElementById('form');
+const status = document.getElementById('status');
+const output = document.getElementById('output');
+const send = document.getElementById('send');
+form.addEventListener('submit', async (event) => {
+  event.preventDefault();
+  const username = document.getElementById('username').value;
+  const password = document.getElementById('password').value;
+  const message = document.getElementById('message').value.trim();
+  if (!message) return;
+  send.disabled = true;
+  status.textContent = 'Contacting our backend...';
+  output.textContent = '';
+  try {
+    const response = await fetch('/chat', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Basic ' + btoa(username + ':' + password)
+      },
+      body: JSON.stringify({message})
+    });
+    const data = await response.json();
+    if (!response.ok) {
+      const detail = typeof data.detail === 'string' ? data.detail : 'Invalid request. Please check your input.';
+      throw Error(`HTTP ${response.status}: ${detail}`);
+    }
+    output.textContent = data.reply;
+    status.textContent = 'Response received from our backend.';
+  } catch (error) {
+    output.textContent = error.message || 'Network error. Check that the backend is running.';
+    status.textContent = 'The request failed; no reply was received.';
+  } finally {
+    send.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
