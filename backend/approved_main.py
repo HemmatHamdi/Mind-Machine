@@ -21,11 +21,12 @@ def build_app():
         attempts = int(os.getenv("ZEROGPU_MAX_ATTEMPTS", "6"))
         budget = QuotaBudget(path, max_attempts=attempts)
         client = PrivateSpaceClient(
-            token=os.environ["HF_TOKEN"],
-            backend_key=os.environ["ZEROGPU_BACKEND_KEY"],
-            execution_approved=True,
+            token=os.environ["HF_TOKEN"], execution_approved=True,
         )
-        return create_app(generator=ZeroGPUAdapter(client, budget))
+        adapter = ZeroGPUAdapter(
+            client, budget, dispatch_key=os.environ["ZEROGPU_BACKEND_KEY"]
+        )
+        return create_app(generator=adapter)
     except Exception:
         return create_app()
 

@@ -17,6 +17,8 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import uuid4
 
+from dispatch_auth import Dispatch, sign_dispatch
+
 
 GPU_SECONDS_PER_ATTEMPT = 30
 MAX_ATTEMPTS = 6
@@ -44,7 +46,9 @@ class SpaceClient(Protocol):
     from FastAPI would not enforce a server-side GPU limit.
     """
 
-    async def generate(self, message: str, *, max_new_tokens: int) -> str: ...
+    async def generate(
+        self, message: str, *, max_new_tokens: int, dispatch: Dispatch
+    ) -> str: ...
 
 
 @dataclass(frozen=True)
@@ -222,7 +226,8 @@ class ZeroGPUAdapter:
     """
 
     def __init__(
-        self, client: SpaceClient, budget: QuotaBudget, *, wait_timeout_seconds: float = 60
+        self, client: SpaceClient, budget: QuotaBudget, *, dispatch_key,
+        wait_timeout_seconds: float = 60,
     ):
         if (
             isinstance(wait_timeout_seconds, bool)
@@ -233,15 +238,28 @@ class ZeroGPUAdapter:
             raise ValueError("Invalid wait timeout.")
         self.client = client
         self.budget = budget
+        self.dispatch_key = dispatch_key
         self.wait_timeout_seconds = wait_timeout_seconds
 
     async def generate(self, message: str) -> str:
         if not isinstance(message, str) or not message.strip() or len(message) > 4_000:
             raise GenerationUnavailable()
-        reservation = self.budget.reserve()
+        message = message.strip()
+        dispatch_id, issued_at = uuid4().hex, int(self.budget.clock())
+        try:
+            tag = sign_dispatch(
+                self.dispatch_key, dispatch_id, issued_at, MAX_NEW_TOKENS, message
+            )
+        except Exception:
+            raise GenerationUnavailable() from None
+        # Charge the local ledger BEFORE anything leaves the backend.
+        reservation = self.budget.reserve(dispatch_id)
         try:
             reply = await asyncio.wait_for(
-                self.client.generate(message, max_new_tokens=MAX_NEW_TOKENS),
+                self.client.generate(
+                    message, max_new_tokens=MAX_NEW_TOKENS,
+                    dispatch=Dispatch(dispatch_id, issued_at, tag),
+                ),
                 timeout=self.wait_timeout_seconds,
             )
             if (

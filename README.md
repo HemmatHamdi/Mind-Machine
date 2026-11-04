@@ -1,5 +1,7 @@
 # Masari — protected Qwen ZeroGPU integration, review only
 
+> Setup, configuration and a `curl` example for the minimal demo: see [`backend/README.md`](backend/README.md).
+
 Production AI generation is **unavailable and not configured**. The default
 `main:app` makes no AI calls, requires no AI API key, and has no fallback provider.
 This branch prepares the **real private Gradio transport, genuine Qwen ZeroGPU

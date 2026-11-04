@@ -3,8 +3,8 @@
 import asyncio
 from collections.abc import Callable
 from threading import Event
-from uuid import uuid4
 
+from dispatch_auth import ID_HEADER, TAG_HEADER, TIME_HEADER, Dispatch
 from zerogpu import GenerationUnavailable, MAX_NEW_TOKENS
 
 SPACE_ID = "Mohanad06/mind-machine-chat"
@@ -21,20 +21,23 @@ class PrivateSpaceClient:
     """One submit, no inference retry, no fallback, no credential-as-chat input."""
 
     def __init__(
-        self, *, token: str, backend_key: str, execution_approved: bool = False,
+        self, *, token: str, execution_approved: bool = False,
         client_factory: Callable = _client_factory,
     ):
-        if execution_approved is not True or not token or len(backend_key) < 32:
+        # The shared signing key never reaches the transport or the network.
+        if execution_approved is not True or not token:
             raise GenerationUnavailable()
         self._token = token
-        self._backend_key = backend_key
         self._factory = client_factory
 
-    async def generate(self, message: str, *, max_new_tokens: int) -> str:
+    async def generate(
+        self, message: str, *, max_new_tokens: int, dispatch: Dispatch
+    ) -> str:
         if (
             not isinstance(message, str) or not message.strip()
             or len(message) > 4_000 or type(max_new_tokens) is not int
             or not 1 <= max_new_tokens <= MAX_NEW_TOKENS
+            or not isinstance(dispatch, Dispatch)
         ):
             raise GenerationUnavailable()
 
@@ -46,8 +49,9 @@ class PrivateSpaceClient:
                 max_workers=1, download_files=False, analytics_enabled=False,
                 ssl_verify=True, httpx_kwargs={"timeout": 15.0},
                 headers={
-                    "X-MM-Backend-Key": self._backend_key,
-                    "X-MM-Dispatch-ID": uuid4().hex,
+                    ID_HEADER: dispatch.id,
+                    TIME_HEADER: str(dispatch.issued_at),
+                    TAG_HEADER: dispatch.tag,
                 },
             )
             # Cancellation during metadata discovery must not cause a late submit.

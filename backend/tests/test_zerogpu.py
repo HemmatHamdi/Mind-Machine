@@ -10,6 +10,7 @@ import sqlite3
 import pytest
 from fastapi.testclient import TestClient
 
+from dispatch_auth import verify_dispatch
 from main import AI_UNAVAILABLE_MESSAGE, create_app
 from security import hash_password
 from zerogpu import (
@@ -17,6 +18,7 @@ from zerogpu import (
 )
 
 
+KEY = "synthetic-backend-key-not-real-" * 2
 PASSWORD = "offline-test-password-only"
 PASSWORD_HASH = hash_password(PASSWORD)
 SYNTHETIC_MESSAGE = "synthetic offline test message"
@@ -28,8 +30,8 @@ class FakeSpace:
         self.error = error
         self.calls = []
 
-    async def generate(self, message, *, max_new_tokens):
-        self.calls.append((message, max_new_tokens))
+    async def generate(self, message, *, max_new_tokens, dispatch):
+        self.calls.append((message, max_new_tokens, dispatch))
         if self.error is not None:
             raise self.error
         return self.reply
@@ -64,12 +66,12 @@ def budget(tmp_path, clock, snapshot):
 
 
 def client_for(space, budget, **kwargs):
-    client = TestClient(create_app(generator=ZeroGPUAdapter(space, budget, **kwargs)))
+    client = TestClient(create_app(generator=ZeroGPUAdapter(space, budget, dispatch_key=KEY, **kwargs)))
     client.auth = ("offline-user", PASSWORD)
     return client
 
 
-def test_fake_success_preserves_contract_and_privacy(budget, caplog, no_outbound_network):
+def test_fake_success_preserves_contract_and_privacy(budget, caplog, no_outbound_network, clock):
     space = FakeSpace()
     with caplog.at_level(logging.INFO):
         response = client_for(space, budget).post(
@@ -78,7 +80,12 @@ def test_fake_success_preserves_contract_and_privacy(budget, caplog, no_outbound
     assert response.status_code == 200
     assert response.json() == {"reply": "Synthetic offline reply"}
     assert response.headers["cache-control"] == "no-store"
-    assert space.calls == [(SYNTHETIC_MESSAGE, 128)]
+    assert [c[:2] for c in space.calls] == [(SYNTHETIC_MESSAGE, 128)]
+    dispatch = space.calls[0][2]
+    assert verify_dispatch(KEY, dispatch.id, dispatch.issued_at, 128, SYNTHETIC_MESSAGE,
+                           dispatch.tag, clock[0])
+    assert not verify_dispatch(KEY, dispatch.id, dispatch.issued_at, 128, 'other',
+                               dispatch.tag, clock[0])
     assert SYNTHETIC_MESSAGE not in caplog.text
     assert PASSWORD not in caplog.text + response.text
     assert no_outbound_network == []
@@ -102,7 +109,7 @@ def test_default_app_cannot_be_activated_by_environment(monkeypatch):
 @pytest.mark.parametrize("auth", [None, ("offline-user", "wrong-test-password")])
 def test_rejected_auth_does_not_dispatch_or_charge(budget, auth):
     space = FakeSpace()
-    client = TestClient(create_app(generator=ZeroGPUAdapter(space, budget)))
+    client = TestClient(create_app(generator=ZeroGPUAdapter(space, budget, dispatch_key=KEY)))
     response = client.post("/chat", json={"message": SYNTHETIC_MESSAGE}, auth=auth)
     assert response.status_code == 401
     assert response.headers["www-authenticate"].startswith("Basic")
@@ -280,7 +287,7 @@ def test_client_failure_is_sanitized_not_retried_or_refunded(budget, caplog, clo
 
 def test_timeout_quarantines_job_across_restart(budget, clock):
     class SlowSpace(FakeSpace):
-        async def generate(self, message, *, max_new_tokens):
+        async def generate(self, message, *, max_new_tokens, dispatch):
             self.calls.append(True)
             await asyncio.sleep(10)
             return self.reply
@@ -298,11 +305,11 @@ def test_timeout_quarantines_job_across_restart(budget, clock):
 
 def test_request_cancellation_keeps_job_quarantined(budget):
     class WaitingSpace(FakeSpace):
-        async def generate(self, message, *, max_new_tokens):
+        async def generate(self, message, *, max_new_tokens, dispatch):
             await asyncio.Event().wait()
 
     async def exercise():
-        task = asyncio.create_task(ZeroGPUAdapter(WaitingSpace(), budget).generate("test"))
+        task = asyncio.create_task(ZeroGPUAdapter(WaitingSpace(), budget, dispatch_key=KEY).generate("test"))
         await asyncio.sleep(0.01)
         task.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -315,7 +322,7 @@ def test_request_cancellation_keeps_job_quarantined(budget):
 @pytest.mark.parametrize("timeout", [0, -1, True, float("inf"), float("nan"), 121, "60"])
 def test_invalid_wait_timeouts_are_rejected(budget, timeout):
     with pytest.raises(ValueError):
-        ZeroGPUAdapter(FakeSpace(), budget, wait_timeout_seconds=timeout)
+        ZeroGPUAdapter(FakeSpace(), budget, dispatch_key=KEY, wait_timeout_seconds=timeout)
 
 
 def test_new_budget_file_is_private_and_cannot_follow_symlinks(tmp_path, clock):
@@ -326,3 +333,16 @@ def test_new_budget_file_is_private_and_cannot_follow_symlinks(tmp_path, clock):
     link.symlink_to(path)
     with pytest.raises(OSError):
         QuotaBudget(link, clock=lambda: clock[0])
+
+
+def test_init_ledger_tool_arms_only_with_confirmations(tmp_path):
+    import init_ledger
+    path = tmp_path / "ledger.sqlite3"
+    base = ["--path", str(path), "--gpu-seconds-remaining", "300", "--runs-remaining", "8"]
+    assert init_ledger.main(base) == 1  # missing confirmations: not armed
+    assert init_ledger.main(base + ["--confirm-free-account", "--confirm-no-paid-usage"]) == 0
+    assert path.stat().st_mode & 0o777 == 0o600
+    with sqlite3.connect(path) as db:
+        assert db.execute("SELECT attempts_left FROM budget").fetchone() == (6,)
+    assert init_ledger.main(["--path", "relative.db", "--gpu-seconds-remaining", "300",
+                             "--runs-remaining", "8"]) == 2
