@@ -34,6 +34,7 @@ class ChatRequest(BaseModel):
 def create_app(
     *, clock: Callable[[], float] = time.monotonic,
     generator: ChatGenerator | None = None,
+    extra_routers: tuple = (),
 ) -> FastAPI:
     app = FastAPI(
         title="Masari Chat API",
@@ -105,6 +106,9 @@ def create_app(
                 detail="AI generation is temporarily unavailable. "
                        "The free quota may be unavailable or require administrator review.",
             ) from None
+
+    for router in extra_routers:
+        app.include_router(router)
 
     return app
 

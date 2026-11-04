@@ -23,46 +23,51 @@ Future bundle manifest (not uploaded by this PR):
 | `space_app/app.py` | `app.py` |
 | `space_app/requirements.txt` | `requirements.txt` |
 | `space_app/README.md` | `README.md` |
-| `backend/zerogpu.py` | `zerogpu.py` |
+| `backend/dispatch_auth.py` | `dispatch_auth.py` |
 
-The fourth file reuses the reviewed, stdlib-only durable budget implementation;
-do not substitute a different revision from another branch.
+The fourth file is stdlib-only (HMAC dispatch verification and one admission POST).
+The Space bundle contains **no** database, ledger or quota code and holds **no**
+database credentials. Do not substitute a revision from another branch.
 
-## Fail-closed deployment prerequisites — not configured yet
+## Request flow (offline-tested with fakes; platform behaviour unverified)
 
-- The backend alone uses a read-scoped `HF_TOKEN` authorized for this private
-  Space. Never deploy `HF_WRITE_TOKEN` as a runtime credential.
-- A separate random backend key (minimum 32 characters) must be provisioned via
-  secure secrets management as `ZEROGPU_BACKEND_KEY` on backend and Space.
-  It is sent in an HTTPS header, never as prompt text or Gradio input.
-- `SPACE_EXECUTION_APPROVED` is absent/false by default. Only a later approval
-  may set it to `true`. A CPU Gradio validator checks this flag, the backend key,
-  payload bounds, a dispatch ID, and the Space ledger before GPU scheduling.
-- `SPACE_BUDGET_PATH` must point to an existing, trusted, owner-only local SQLite
-  ledger, separately manually armed using `QuotaBudget.arm(ManualQuotaSnapshot)`.
-  `SPACE_MAX_ATTEMPTS` may lower the six-attempt ceiling, never raise it.
-  Missing storage, missing/unarmed ledger, invalid configuration or expired
-  evidence rejects execution. Ephemeral storage loss must never auto-arm a ledger.
-- The Space and backend each need persistent shared ledgers for their respective
-  workers. No automatic reset/replenishment, refund, or uncertain-job recovery.
-  A new deployment requires operator review; do not delete/recreate armed ledgers
-  to evade exhausted or uncertain state.
-- Do not arm or enable either side during code review. No readiness/health-check
-  may invoke `/generate`.
+1. Backend authenticates the user and applies the per-user limit.
+2. Backend signs a dispatch (ID, time, token limit, message) with `ZEROGPU_BACKEND_KEY`
+   and **reserves** it in the central ledger (charges one attempt, takes the single
+   job lock). Nothing is sent before the reservation commits.
+3. Backend submits once to the private Space with only the ID/time/tag headers.
+   The root key is never sent.
+4. The Space CPU validator verifies the tag locally, then POSTs a purpose-bound
+   proof to the backend control endpoint (`ZEROGPU_CONTROL_URL`, HTTPS). The ledger
+   admits each reservation exactly once, before the ticket expires.
+5. The `@spaces.GPU(duration=30, size="large")` handler re-verifies the tag locally
+   and runs bounded inference on the already-loaded model.
+6. Backend marks the reservation complete only after a valid reply. Errors,
+   timeouts and cancellation never refund and keep the job lock (quarantine).
+
+## Approval flags (all default off)
+
+- `SPACE_MODEL_INIT_APPROVED=true` loads Qwen at Space startup (module level, ZeroGPU
+  CUDA emulation). No warm-up generation, no retry, never inside the GPU handler.
+- `SPACE_EXECUTION_APPROVED=true` accepts and runs admitted requests. It is independent
+  of the init flag; a failed or absent load makes the handler refuse.
+- `ZEROGPU_BACKEND_KEY` (min 32 chars) and `ZEROGPU_CONTROL_URL` (https only).
+- Backend only: read-scope `HF_TOKEN`; ledger via `LIBSQL_URL`/`LIBSQL_AUTH_TOKEN`
+  (none provisioned). Never use `HF_WRITE_TOKEN` at runtime.
+- Backend deployment: one worker/replica, HTTPS at the trusted ingress, no automatic
+  POST retries. Storage that is unavailable, corrupt, missing or incompatible
+  rejects every request; there is no auto-create, reset, snapshot restore or refund.
 
 Six attempts reserve at most 180 GPU-seconds, with two of the observed eight runs
 reserved. These are conservative **application** limits, not HF account quota
-readings or billing caps. Other Spaces can consume the same account resources.
-No paid fallback, credits, billing calls or account upgrades are implemented.
+readings or billing caps. No paid fallback or billing calls are implemented.
 
-## Known cold-start limitation
+## Remaining limitations
 
-Weights/tokenizer load lazily only inside an approved GPU call. This follows the
-user's restriction but differs from HF's recommended module-level loading/CUDA
-placement. A first download + load + generation may exceed the hard 30-second
-allocation. No live latency or successful inference is claimed. A timeout or
-uncertain outcome consumes the local attempt and locks subsequent jobs pending
-operator review; do not retry automatically or increase duration without approval.
+Startup loading follows HF's documented approach, but a 30-second allocation is not
+proven sufficient and no live latency, successful inference, Turso transaction
+behaviour or ZeroGPU emulation behaviour is claimed. The control endpoint must be
+reachable by the Space over HTTPS.
 
 The fixed model is `Qwen/Qwen2.5-1.5B-Instruct`, revision
 `989aa7980e4cf806f80c7fef2b1adb7bc71aa306`, safetensors only, remote code disabled.

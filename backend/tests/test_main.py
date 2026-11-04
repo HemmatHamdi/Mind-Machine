@@ -105,7 +105,11 @@ def test_openapi_preserves_request_contract_and_documents_unavailability():
 
 def test_runtime_and_template_have_no_provider_configuration_or_client():
     backend = Path(__file__).resolve().parents[1]
+    # Modules that legitimately own an HTTPS call path to the storage/control
+    # plane (lazy, injectable, never run at import). Provider names stay banned.
+    https_allowed = {"ledger_store.py", "dispatch_auth.py"}
     for path in backend.glob("*.py"):
+        allowed = path.name in https_allowed
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -114,11 +118,12 @@ def test_runtime_and_template_have_no_provider_configuration_or_client():
                 modules = [(node.module or "").split(".")[0]]
             else:
                 continue
-            assert not set(modules) & {
-                "httpx", "requests", "urllib", "aiohttp", "groq", "google", "openai"
-            }
+            banned = {"httpx", "requests", "urllib", "aiohttp", "groq", "google", "openai"}
+            if allowed:
+                banned -= {"urllib"}
+            assert not set(modules) & banned
         text = path.read_text().lower()
-        assert "https://" not in text
+        assert allowed or "https://" not in text
         assert "groq" not in text
         assert "gemini" not in text
     template = (backend / ".env.example").read_text()
