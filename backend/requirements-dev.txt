@@ -1,3 +1,5 @@
 -r requirements.txt
 httpx>=0.27,<1
 pytest>=8,<10
+# Real Gradio routing is exercised only with fake GPU/model implementations.
+gradio==6.31.0

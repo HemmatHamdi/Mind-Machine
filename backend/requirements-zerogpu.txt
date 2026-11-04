@@ -1,0 +1,3 @@
+# Optional future execution dependencies; not needed for default main:app.
+-r requirements.txt
+gradio-client==2.7.2

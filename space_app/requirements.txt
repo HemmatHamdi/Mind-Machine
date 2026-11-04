@@ -1,0 +1,5 @@
+gradio==6.31.0
+spaces==0.51.3
+torch==2.11.0
+transformers==5.22.1
+safetensors>=0.4.3,<1
