@@ -51,6 +51,7 @@ backend/
   tests/
     test_main.py     Endpoint, validation, and provider-error tests
 README.md            Setup, architecture, and Week 5 implementation notes
+.gitignore           Excludes local credentials, virtual environments, and caches
 ```
 
 ## 7. Prerequisites
@@ -121,7 +122,11 @@ Error responses are generic and do not include the API key, user message, or raw
 
 **Implemented:** server-side `POST /chat`, input/config validation, Gemini REST request construction, response parsing, sanitized failure handling, and automated tests.
 
-**Awaiting configuration/live verification:** the repository's planning docs do not set the exact Gemini model ID (deferred to Week 6), and a valid API key is required for a genuine model call. No real Gemini response is claimed until that live test is run.
+**Verified locally:** the automated suite passed; Uvicorn started, OpenAPI registered `POST /chat`, invalid input returned 422, and missing configuration returned 503. Validation responses omit submitted input.
+
+**Live verification attempted, not successful (4 November 2026):** the API key was supplied securely, and Google's model-list endpoint returned HTTP 200 and listed the temporarily selected `gemini-3.8-flash` as supporting `generateContent`. A backend generation attempt timed out at 30 seconds; a second attempt with a 120-second timeout returned a sanitized provider-error response (HTTP 502). A direct provider diagnostic also timed out at 120 seconds. No real generated reply was received, so the end-to-end live requirement remains unverified. The provider's exact failure cause is not established.
+
+The temporary test model was passed only through the test process's `GEMINI_MODEL` environment variable. No model ID is hardcoded or selected by default, and no team-approved model is implied. To complete the live check, set `GEMINI_MODEL` to the team's selected model, supply a valid key securely, and run the cURL request above.
 
 **Outside this Week 5 change:** frontend, RAG/BM25 retrieval, deterministic pathway scoring, conversation memory, agent orchestration, and the remainder of the Masari product.
 
@@ -131,4 +136,5 @@ Error responses are generic and do not include the API key, user message, or raw
 - `backend/requirements.txt` — application and test dependencies.
 - `backend/.env.example` — non-secret configuration template.
 - `backend/tests/test_main.py` — focused endpoint and error tests.
+- `.gitignore` — excludes local secrets, virtual environments, and generated caches.
 - `README.md` — setup, request flow, configuration, test instructions, and status.

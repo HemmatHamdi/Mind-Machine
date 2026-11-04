@@ -6,6 +6,8 @@ import re
 import httpx
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 load_dotenv()
@@ -32,6 +34,20 @@ def create_app(transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
         version="1.0.0",
     )
     app.state.gemini_transport = transport
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(request, exc: RequestValidationError):
+        # FastAPI's default response includes the submitted input.
+        # Keep validation details useful without echoing user messages.
+        return JSONResponse(
+            status_code=422,
+            content={
+                "detail": [
+                    {"loc": list(error["loc"]), "msg": error["msg"], "type": error["type"]}
+                    for error in exc.errors()
+                ]
+            },
+        )
 
     @app.post("/chat")
     async def chat(request: ChatRequest) -> dict[str, str]:

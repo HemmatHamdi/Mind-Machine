@@ -47,6 +47,18 @@ def test_blank_message_is_rejected(monkeypatch):
     assert response.status_code == 422
 
 
+def test_validation_errors_do_not_echo_user_input(monkeypatch):
+    configure(monkeypatch)
+    client = TestClient(create_app())
+    private_message = "private-text-" * 400
+
+    response = client.post("/chat", json={"message": private_message})
+
+    assert response.status_code == 422
+    assert "private-text-" not in response.text
+    assert "input" not in response.json()["detail"][0]
+
+
 def test_missing_credentials_return_configuration_error(monkeypatch):
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.setenv("GEMINI_MODEL", "gemini-test-model")
