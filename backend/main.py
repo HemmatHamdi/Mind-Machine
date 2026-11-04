@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from security import ChatSecurity
+from zerogpu import ChatGenerator
 
 load_dotenv()
 
@@ -30,7 +31,10 @@ class ChatRequest(BaseModel):
         return value.strip()
 
 
-def create_app(*, clock: Callable[[], float] = time.monotonic) -> FastAPI:
+def create_app(
+    *, clock: Callable[[], float] = time.monotonic,
+    generator: ChatGenerator | None = None,
+) -> FastAPI:
     app = FastAPI(
         title="Masari Chat API",
         description=(
@@ -88,9 +92,19 @@ def create_app(*, clock: Callable[[], float] = time.monotonic) -> FastAPI:
         },
     )
     async def chat(request: ChatRequest) -> dict[str, str]:
-        # Deliberately no provider, network client, credential lookup, or fallback.
-        # Keep the existing JSON error envelope instead of fabricating a reply.
-        raise HTTPException(status_code=503, detail=AI_UNAVAILABLE_MESSAGE)
+        # Only offline tests inject a fake generator. The production entrypoint
+        # below has no transport, credential lookup, environment switch or fallback.
+        if generator is None:
+            raise HTTPException(status_code=503, detail=AI_UNAVAILABLE_MESSAGE)
+        try:
+            return {"reply": await generator.generate(request.message)}
+        except Exception:
+            # Never expose client errors, submitted text, or credentials.
+            raise HTTPException(
+                status_code=503,
+                detail="AI generation is temporarily unavailable. "
+                       "The free quota may be unavailable or require administrator review.",
+            ) from None
 
     return app
 
