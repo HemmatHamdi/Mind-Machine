@@ -6,9 +6,13 @@ import pytest
 from fastapi.testclient import TestClient
 
 from main import GROQ_CHAT_URL, create_app
+from security import hash_password
 
 
 TEST_KEY = "test-key-not-a-real-credential"
+TEST_USER = "test-user"
+TEST_PASSWORD = "fake-test-password-only"
+TEST_PASSWORD_HASH = hash_password(TEST_PASSWORD)
 PRIVATE_MESSAGE = "private test input"
 MODEL_RESPONSE = {
     "choices": [
@@ -27,6 +31,15 @@ def configure(monkeypatch):
     monkeypatch.setenv("GROQ_FREE_PLAN_CONFIRMED", "true")
     monkeypatch.setenv("GROQ_TIMEOUT_SECONDS", "30")
     monkeypatch.setenv("GROQ_MAX_COMPLETION_TOKENS", "512")
+    monkeypatch.setenv("CHAT_AUTH_USERS", json.dumps({TEST_USER: TEST_PASSWORD_HASH}))
+    monkeypatch.setenv("CHAT_RATE_LIMIT_REQUESTS", "1000")
+    monkeypatch.setenv("CHAT_RATE_LIMIT_WINDOW_SECONDS", "60")
+
+
+def authenticated_client(app):
+    client = TestClient(app)
+    client.auth = (TEST_USER, TEST_PASSWORD)
+    return client
 
 
 def test_chat_sends_message_server_side_and_returns_model_text():
@@ -36,7 +49,7 @@ def test_chat_sends_message_server_side_and_returns_model_text():
         observed.append(request)
         return httpx.Response(200, json=MODEL_RESPONSE)
 
-    client = TestClient(create_app(httpx.MockTransport(handler)))
+    client = authenticated_client(create_app(httpx.MockTransport(handler)))
     response = client.post("/chat", json={"message": "  Hello  "})
 
     assert response.status_code == 200
@@ -61,7 +74,7 @@ def test_chat_sends_message_server_side_and_returns_model_text():
 )
 def test_invalid_messages_are_rejected_without_echoing_input(payload):
     calls = []
-    client = TestClient(create_app(httpx.MockTransport(lambda r: calls.append(r))))
+    client = authenticated_client(create_app(httpx.MockTransport(lambda r: calls.append(r))))
 
     response = client.post("/chat", json=payload)
 
@@ -74,7 +87,7 @@ def test_invalid_messages_are_rejected_without_echoing_input(payload):
 
 
 def test_malformed_json_does_not_echo_input():
-    response = TestClient(create_app()).post(
+    response = authenticated_client(create_app()).post(
         "/chat", content='{"message":"private', headers={"Content-Type": "application/json"}
     )
     assert response.status_code == 422
@@ -85,7 +98,7 @@ def test_malformed_json_does_not_echo_input():
 def test_missing_configuration_never_calls_provider(monkeypatch, name):
     monkeypatch.delenv(name)
     calls = []
-    client = TestClient(create_app(httpx.MockTransport(lambda r: calls.append(r))))
+    client = authenticated_client(create_app(httpx.MockTransport(lambda r: calls.append(r))))
     response = client.post("/chat", json={"message": PRIVATE_MESSAGE})
     assert response.status_code == 503
     assert calls == []
@@ -95,7 +108,7 @@ def test_missing_configuration_never_calls_provider(monkeypatch, name):
 def test_free_plan_guard_fails_closed(monkeypatch, confirmed):
     monkeypatch.setenv("GROQ_FREE_PLAN_CONFIRMED", confirmed)
     calls = []
-    client = TestClient(create_app(httpx.MockTransport(lambda r: calls.append(r))))
+    client = authenticated_client(create_app(httpx.MockTransport(lambda r: calls.append(r))))
     response = client.post("/chat", json={"message": PRIVATE_MESSAGE})
     assert response.status_code == 503
     assert calls == []
@@ -120,7 +133,7 @@ def test_free_plan_guard_fails_closed(monkeypatch, confirmed):
 def test_invalid_configuration_never_calls_provider(monkeypatch, name, value):
     monkeypatch.setenv(name, value)
     calls = []
-    client = TestClient(create_app(httpx.MockTransport(lambda r: calls.append(r))))
+    client = authenticated_client(create_app(httpx.MockTransport(lambda r: calls.append(r))))
     response = client.post("/chat", json={"message": PRIVATE_MESSAGE})
     assert response.status_code == 503
     assert calls == []
@@ -142,7 +155,7 @@ def test_provider_failures_are_sanitized_without_retry(status, expected, caplog)
         )
 
     with caplog.at_level(logging.INFO):
-        response = TestClient(create_app(httpx.MockTransport(handler))).post(
+        response = authenticated_client(create_app(httpx.MockTransport(handler))).post(
             "/chat", json={"message": PRIVATE_MESSAGE}
         )
 
@@ -165,7 +178,7 @@ def test_transport_failures_are_sanitized_without_retry(exception, expected, cap
         raise exception(f"{TEST_KEY} {PRIVATE_MESSAGE}", request=request)
 
     with caplog.at_level(logging.INFO):
-        response = TestClient(create_app(httpx.MockTransport(handler))).post(
+        response = authenticated_client(create_app(httpx.MockTransport(handler))).post(
             "/chat", json={"message": PRIVATE_MESSAGE}
         )
 
@@ -190,7 +203,7 @@ def test_transport_failures_are_sanitized_without_retry(exception, expected, cap
 )
 def test_invalid_or_incomplete_provider_response_is_sanitized(body):
     transport = httpx.MockTransport(lambda r: httpx.Response(200, content=json.dumps(body)))
-    response = TestClient(create_app(transport)).post("/chat", json={"message": PRIVATE_MESSAGE})
+    response = authenticated_client(create_app(transport)).post("/chat", json={"message": PRIVATE_MESSAGE})
     assert response.status_code == 502
     assert PRIVATE_MESSAGE not in response.text
     assert "Traceback" not in response.text
@@ -198,7 +211,7 @@ def test_invalid_or_incomplete_provider_response_is_sanitized(body):
 
 def test_non_json_response_is_sanitized():
     transport = httpx.MockTransport(lambda r: httpx.Response(200, text=PRIVATE_MESSAGE))
-    response = TestClient(create_app(transport)).post("/chat", json={"message": PRIVATE_MESSAGE})
+    response = authenticated_client(create_app(transport)).post("/chat", json={"message": PRIVATE_MESSAGE})
     assert response.status_code == 502
     assert PRIVATE_MESSAGE not in response.text
 
@@ -210,7 +223,7 @@ def test_redirect_is_not_followed():
         calls.append(request)
         return httpx.Response(307, headers={"location": "https://other.example/"})
 
-    response = TestClient(create_app(httpx.MockTransport(handler))).post(
+    response = authenticated_client(create_app(httpx.MockTransport(handler))).post(
         "/chat", json={"message": PRIVATE_MESSAGE}
     )
     assert response.status_code == 502

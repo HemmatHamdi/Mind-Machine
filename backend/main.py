@@ -4,13 +4,16 @@ import logging
 import os
 import re
 import time
+from collections.abc import Callable
 
 import httpx
 from dotenv import load_dotenv
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
+
+from security import ChatSecurity
 
 load_dotenv()
 
@@ -30,13 +33,40 @@ class ChatRequest(BaseModel):
         return value.strip()
 
 
-def create_app(transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
+def create_app(
+    transport: httpx.AsyncBaseTransport | None = None,
+    *,
+    clock: Callable[[], float] = time.monotonic,
+) -> FastAPI:
     app = FastAPI(
         title="Masari Week 5 AI API",
         description="A minimal backend endpoint that sends a message to Groq.",
         version="1.0.0",
     )
     app.state.groq_transport = transport
+    security = ChatSecurity(clock=clock)
+
+    @app.middleware("http")
+    async def protect_chat(request, call_next):
+        # Authenticate and reserve a per-user slot before parsing the body,
+        # including malformed JSON. Never trust a client-supplied user/IP header.
+        path = request.scope["path"]
+        root_path = request.scope.get("root_path", "").rstrip("/")
+        if root_path and path.startswith(root_path + "/"):
+            path = path[len(root_path):]
+        if request.method == "POST" and path.rstrip("/") == "/chat":
+            try:
+                await security.check_request(request)
+            except HTTPException as exc:
+                return JSONResponse(
+                    status_code=exc.status_code,
+                    content={"detail": exc.detail},
+                    headers={**(exc.headers or {}), "Cache-Control": "no-store"},
+                )
+            response = await call_next(request)
+            response.headers["Cache-Control"] = "no-store"
+            return response
+        return await call_next(request)
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request, exc: RequestValidationError):
@@ -52,7 +82,12 @@ def create_app(transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
             },
         )
 
-    @app.post("/chat")
+    # The route also enforces security as defense in depth for mounted apps.
+    # Request state prevents a second password check or quota reservation.
+    @app.post(
+        "/chat",
+        dependencies=[Depends(security.scheme), Depends(security.check_request)],
+    )
     async def chat(request: ChatRequest) -> dict[str, str]:
         api_key = os.getenv("GROQ_API_KEY", "").strip()
         model = os.getenv("GROQ_MODEL", "").strip()
