@@ -1,7 +1,9 @@
-"""Minimal server-side Gemini integration for the Masari Week 5 deliverable."""
+"""Minimal server-side Groq integration for the Masari Week 5 deliverable."""
 
+import logging
 import os
 import re
+import time
 
 import httpx
 from dotenv import load_dotenv
@@ -12,8 +14,9 @@ from pydantic import BaseModel, Field, field_validator
 
 load_dotenv()
 
-GEMINI_API_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models"
+GROQ_CHAT_URL = "https://api.groq.com/openai/v1/chat/completions"
 MAX_MESSAGE_LENGTH = 4_000
+logger = logging.getLogger(__name__)
 
 
 class ChatRequest(BaseModel):
@@ -30,10 +33,10 @@ class ChatRequest(BaseModel):
 def create_app(transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
     app = FastAPI(
         title="Masari Week 5 AI API",
-        description="A minimal backend endpoint that sends a message to Gemini.",
+        description="A minimal backend endpoint that sends a message to Groq.",
         version="1.0.0",
     )
-    app.state.gemini_transport = transport
+    app.state.groq_transport = transport
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request, exc: RequestValidationError):
@@ -51,19 +54,29 @@ def create_app(transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
 
     @app.post("/chat")
     async def chat(request: ChatRequest) -> dict[str, str]:
-        api_key = os.getenv("GEMINI_API_KEY", "").strip()
-        model = os.getenv("GEMINI_MODEL", "").strip()
-        timeout_text = os.getenv("GEMINI_TIMEOUT_SECONDS", "20")
+        api_key = os.getenv("GROQ_API_KEY", "").strip()
+        model = os.getenv("GROQ_MODEL", "").strip()
+        timeout_text = os.getenv("GROQ_TIMEOUT_SECONDS", "30")
+        max_tokens_text = os.getenv("GROQ_MAX_COMPLETION_TOKENS", "512")
 
         if not api_key or not model:
             raise HTTPException(
                 status_code=503,
-                detail="AI service is not configured. Set GEMINI_API_KEY and GEMINI_MODEL.",
+                detail="AI service is not configured. Set GROQ_API_KEY and GROQ_MODEL.",
             )
-        if not re.fullmatch(r"[A-Za-z0-9._-]+", model):
+        # This is an operator acknowledgement, not a billing-status API check.
+        # Never send inference until the account's Free plan has been confirmed.
+        if os.getenv("GROQ_FREE_PLAN_CONFIRMED", "").strip().lower() != "true":
             raise HTTPException(
                 status_code=503,
-                detail="GEMINI_MODEL must be a model ID, not a URL or path.",
+                detail="AI service is disabled until the administrator confirms the Groq Free plan.",
+            )
+        if len(model) > 200 or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9._-]*(?:/[A-Za-z0-9][A-Za-z0-9._-]*)?", model
+        ):
+            raise HTTPException(
+                status_code=503,
+                detail="GROQ_MODEL must be a model ID, not a URL or routing policy.",
             )
         try:
             timeout_seconds = float(timeout_text)
@@ -72,50 +85,101 @@ def create_app(transport: httpx.AsyncBaseTransport | None = None) -> FastAPI:
         except ValueError:
             raise HTTPException(
                 status_code=503,
-                detail="GEMINI_TIMEOUT_SECONDS must be between 1 and 120.",
+                detail="GROQ_TIMEOUT_SECONDS must be between 1 and 120.",
+            ) from None
+        try:
+            max_tokens = int(max_tokens_text)
+            if not 1 <= max_tokens <= 1_024:
+                raise ValueError
+        except ValueError:
+            raise HTTPException(
+                status_code=503,
+                detail="GROQ_MAX_COMPLETION_TOKENS must be an integer between 1 and 1024.",
             ) from None
 
-        url = f"{GEMINI_API_BASE_URL}/{model}:generateContent"
-        payload = {"contents": [{"parts": [{"text": request.message}]}]}
-        headers = {"x-goog-api-key": api_key, "Content-Type": "application/json"}
+        payload = {
+            "model": model,
+            "messages": [{"role": "user", "content": request.message}],
+            "max_completion_tokens": max_tokens,
+            "stream": False,
+        }
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
 
+        started = time.monotonic()
         try:
+            # HTTPX does not retry by default. Do not follow redirects carrying
+            # credentials, select another provider, or request paid flex tiers.
             async with httpx.AsyncClient(
                 timeout=timeout_seconds,
-                transport=app.state.gemini_transport,
+                transport=app.state.groq_transport,
+                follow_redirects=False,
             ) as client:
-                response = await client.post(url, json=payload, headers=headers)
+                response = await client.post(GROQ_CHAT_URL, json=payload, headers=headers)
         except httpx.TimeoutException:
+            logger.warning("Groq timeout elapsed_seconds=%.3f", time.monotonic() - started)
             raise HTTPException(
                 status_code=504,
-                detail="The AI service timed out. Please try again.",
+                detail="The AI service timed out. No automatic retry was made.",
             ) from None
         except httpx.RequestError:
+            logger.warning("Groq network failure elapsed_seconds=%.3f", time.monotonic() - started)
             raise HTTPException(
                 status_code=502,
-                detail="The AI service could not be reached. Please try again.",
+                detail="The AI service could not be reached. No automatic retry was made.",
             ) from None
 
-        if response.is_error:
+        # Retain useful status/timing diagnostics, never headers, bodies, or
+        # exception strings (which could contain credentials or prompt text).
+        logger.info(
+            "Groq response status=%d elapsed_seconds=%.3f",
+            response.status_code,
+            time.monotonic() - started,
+        )
+        if response.status_code in (401, 403):
+            raise HTTPException(
+                status_code=503,
+                detail="AI service authentication or access failed. Contact the administrator.",
+            )
+        if response.status_code == 402:
+            raise HTTPException(
+                status_code=503,
+                detail="AI service free allowance is unavailable. Paid fallback is disabled.",
+            )
+        if response.status_code == 429:
+            raise HTTPException(
+                status_code=429,
+                detail="AI service rate or free usage limit reached. Please try again later.",
+            )
+        if response.status_code == 404:
+            raise HTTPException(
+                status_code=503,
+                detail="The configured AI model is unavailable. Contact the administrator.",
+            )
+        if response.status_code == 503:
+            raise HTTPException(
+                status_code=503,
+                detail="The AI provider is temporarily unavailable. Please try again later.",
+            )
+        if response.status_code != 200:
             raise HTTPException(
                 status_code=502,
-                detail="The AI service returned an error. Please try again later.",
+                detail="The AI service rejected the request or returned an error.",
             )
 
         try:
             body = response.json()
-            candidates = body.get("candidates", [])
-            parts = candidates[0]["content"]["parts"]
-            reply = "".join(
-                part["text"] for part in parts if isinstance(part.get("text"), str)
-            ).strip()
+            choice = body["choices"][0]
+            content = choice["message"]["content"]
+            reply = content.strip() if isinstance(content, str) else ""
+            if choice.get("finish_reason") != "stop":
+                reply = ""
         except (ValueError, IndexError, KeyError, TypeError, AttributeError):
             reply = ""
 
         if not reply:
             raise HTTPException(
                 status_code=502,
-                detail="The AI service returned an unexpected response. Please try again.",
+                detail="The AI service did not return a complete text reply.",
             )
 
         return {"reply": reply}
