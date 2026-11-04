@@ -1,7 +1,8 @@
-"""Offline ZeroGPU integration contract; deliberately no live network transport.
+"""Network-free ZeroGPU contracts, persistent reservations and response guard.
 
-Only tests inject a Space client. There is no environment-variable activation,
-token lookup, automatic quota refresh, billing operation, or model fallback.
+Default main:app is disabled. The separate operator-selected entrypoint may
+inject the approved private transport only after future execution authorization.
+This module has no token lookup, quota refresh, billing operation or fallback.
 """
 
 import asyncio
@@ -66,9 +67,15 @@ class QuotaBudget:
     This counter cannot observe other account usage or enforce HF billing policy.
     """
 
-    def __init__(self, path: Path, *, clock: Callable[[], float] = time.time):
+    def __init__(
+        self, path: Path, *, clock: Callable[[], float] = time.time,
+        max_attempts: int = MAX_ATTEMPTS,
+    ):
+        if type(max_attempts) is not int or not 1 <= max_attempts <= MAX_ATTEMPTS:
+            raise ValueError("Invalid local attempt ceiling.")
         self.path = Path(path)
         self.clock = clock
+        self.max_attempts = max_attempts
         # The parent must already exist. Refuse symlinks and restrict a new file.
         flags = os.O_CREAT | os.O_RDWR | getattr(os, "O_NOFOLLOW", 0)
         descriptor = os.open(self.path, flags, 0o600)
@@ -82,6 +89,10 @@ class QuotaBudget:
                     gpu_seconds_left INTEGER NOT NULL CHECK (gpu_seconds_left >= 0),
                     active_job TEXT
                 )"""
+            )
+            db.execute(
+                "CREATE TABLE IF NOT EXISTS reservations "
+                "(id TEXT PRIMARY KEY NOT NULL)"
             )
 
     @contextmanager
@@ -118,7 +129,7 @@ class QuotaBudget:
         ):
             raise GenerationUnavailable() from None
         attempts = min(
-            MAX_ATTEMPTS,
+            self.max_attempts,
             max(0, snapshot.runs_remaining - RUN_RESERVE),
             max(0, (snapshot.gpu_seconds_remaining - GPU_RESERVE_SECONDS)
                 // GPU_SECONDS_PER_ATTEMPT),
@@ -142,8 +153,13 @@ class QuotaBudget:
         except sqlite3.Error:
             raise GenerationUnavailable() from None
 
-    def reserve(self) -> str:
+    def reserve(self, reservation_id: str | None = None) -> str:
         """Charge before dispatch; errors/cancellation never refund the attempt."""
+        if reservation_id is not None and (
+            not isinstance(reservation_id, str) or len(reservation_id) != 32
+            or any(c not in "0123456789abcdef" for c in reservation_id)
+        ):
+            raise GenerationUnavailable()
         now = self.clock()
         if not math.isfinite(now):
             raise GenerationUnavailable()
@@ -156,10 +172,12 @@ class QuotaBudget:
                 ).fetchone()
                 if (
                     row is None or row[0] <= now or row[1] <= 0
+                    or row[1] > self.max_attempts
                     or row[2] < GPU_SECONDS_PER_ATTEMPT or row[3] is not None
                 ):
                     raise GenerationUnavailable()
-                reservation = uuid4().hex
+                reservation = reservation_id or uuid4().hex
+                db.execute("INSERT INTO reservations VALUES (?)", (reservation,))
                 db.execute(
                     """UPDATE budget SET attempts_left = attempts_left - 1,
                        gpu_seconds_left = gpu_seconds_left - ?, active_job = ?
@@ -167,6 +185,18 @@ class QuotaBudget:
                     (GPU_SECONDS_PER_ATTEMPT, reservation),
                 )
                 return reservation
+        except sqlite3.Error:
+            raise GenerationUnavailable() from None
+
+    def require_active(self, reservation: str) -> None:
+        """Verify a pre-GPU reservation without allocating or charging a new job."""
+        try:
+            with self._connect() as db:
+                row = db.execute(
+                    "SELECT active_job FROM budget WHERE id = 1"
+                ).fetchone()
+                if row is None or row[0] != reservation:
+                    raise GenerationUnavailable()
         except sqlite3.Error:
             raise GenerationUnavailable() from None
 
@@ -185,10 +215,10 @@ class QuotaBudget:
 
 
 class ZeroGPUAdapter:
-    """Exercise the approved integration offline via an injected fake client.
+    """Guard the injected Space client; offline tests use fakes exclusively.
 
     Production main:app never constructs this adapter or a Space client.
-    A future real transport requires separate approval and access verification.
+    Running the prepared real transport requires separate execution approval.
     """
 
     def __init__(
