@@ -79,10 +79,45 @@ def test_missing_unretrieved_citations_or_model_links_are_rejected(reply):
     assert cited_reply(reply, passages) == NO_EVIDENCE_REPLY
 
 
-def test_shipped_corpus_contains_no_unreviewed_education_facts():
+def test_shipped_corpus_distinguishes_report_from_pending_decrees():
     kb = KnowledgeBase.load()
-    assert kb.passages == []
+    assert len(kb.passages) == 7
+    assert {p["source_id"] for p in kb.passages} == {"maspero_faq_2026_11_12"}
+    for passage in kb.passages:
+        assert passage["source"]["status"] == "reviewed_report"
+        assert "وليس نص القرار الأصلي" in passage["source"]["notice"]
     assert kb.retrieve("ما هي مسارات البكالوريا المصرية؟") == []
+
+
+@pytest.mark.parametrize(("question", "passage_id"), [
+    ("كيف يتم تقييم الثقافة المالية؟", "FAQ_FINANCE"),
+    ("هل أقدر أغير اللغة الأجنبية الثانية؟", "FAQ_LANGUAGE"),
+    ("متى لقاءات المرشد التعليمي في أولى ثانوي؟", "FAQ_GUIDANCE"),
+    ("امتحان المحاسبة وإدارة الأعمال بالعربية", "FAQ_ARABIC"),
+    ("نسبة الحضور والغياب في الصف الثاني", "FAQ_ATTENDANCE"),
+    ("مشروع الصف الثاني وتقييمه", "FAQ_PROJECT"),
+    ("التحاق الراسب بالصف الثاني بالبكالوريا", "FAQ_TRANSFER"),
+])
+def test_report_faq_topics_are_retrieved(question, passage_id):
+    assert KnowledgeBase.load().retrieve(question)[0]["id"] == passage_id
+
+
+@pytest.mark.parametrize("question", [
+    "كم عدد مواد البكالوريا؟", "ما هي رسوم الإعادة؟",
+    "ما هي كليات مسار الأعمال؟", "هل الطب أفضل من الهندسة؟",
+])
+def test_report_does_not_cover_all_rules_or_admissions(question):
+    assert KnowledgeBase.load().retrieve(question) == []
+
+
+def test_reviewed_report_always_has_a_visible_attribution():
+    kb = KnowledgeBase.load()
+    passages = kb.retrieve("تقييم الثقافة المالية")
+    reply = cited_reply("إجابة وهمية للاختبار [FAQ_FINANCE]", passages)
+    assert reply.startswith("بحسب تقرير ماسبيرو")
+    assert "12 نوفمبر 2026" in reply
+    assert "وليس نص القرار الأصلي" in reply
+    assert "https://www.maspero.eg/" in reply
 
 
 def test_no_evidence_means_no_provider_client():
@@ -96,7 +131,7 @@ def test_no_evidence_means_no_provider_client():
     assert asyncio.run(adapter.generate("ما هي شروط كلية الطب؟")) == NO_EVIDENCE_REPLY
 
 
-def test_authenticated_chat_with_current_corpus_returns_handover_without_network(
+def test_authenticated_unsupported_chat_returns_handover_without_network(
     monkeypatch,
 ):
     from approved_main import build_app
@@ -128,3 +163,35 @@ def test_authenticated_chat_with_current_corpus_returns_handover_without_network
             "/chat", json={"message": "ما هي مسارات البكالوريا؟"},
             auth=("demo", "synthetic-password-only"),
         ).status_code == 429
+
+
+def test_authenticated_report_question_sends_evidence_to_fake_model(monkeypatch):
+    from types import SimpleNamespace
+    from approved_main import build_app
+
+    monkeypatch.setenv("GEMINI_EXECUTION_APPROVED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("CHAT_AUTH_USERS", json.dumps({
+        "demo": hash_password("synthetic-password-only"),
+    }))
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(output_text="رد وهمي لاختبار الربط [FAQ_GUIDANCE]")
+
+    def factory(api_key):
+        return SimpleNamespace(interactions=SimpleNamespace(create=create))
+
+    with TestClient(build_app(client_factory=factory)) as client:
+        response = client.post(
+            "/chat", json={"message": "متى لقاءات المرشد التعليمي في أولى ثانوي؟"},
+            auth=("demo", "synthetic-password-only"),
+        )
+    assert response.status_code == 200
+    assert response.json()["reply"].startswith("بحسب تقرير ماسبيرو")
+    assert "وليس نص القرار الأصلي" in response.json()["reply"]
+    assert len(calls) == 1
+    evidence = json.loads(calls[0]["input"])["evidence"]
+    assert evidence[0]["id"] == "FAQ_GUIDANCE"
+    assert "وليس نص القرار الأصلي" in evidence[0]["source_note"]

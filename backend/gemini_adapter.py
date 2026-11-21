@@ -22,6 +22,9 @@ evidence does not answer the entire question, say you cannot verify it and refer
 to a Ministry source or school counselor. Never invent a regulation, pathway,
 exam rule, date, admission condition or citation. Do not choose a pathway for the
 student, predict ability or success, or request personal data.
+Respect each passage's source_note: a Ministry-attributed media report is not the
+original decree. Preserve exceptions and do not infer deadlines, admissions or
+all-pathway rules from a narrowly scoped FAQ.
 """
 
 
@@ -67,7 +70,10 @@ class GeminiAdapter:
             input=json.dumps({
                 "question": message,
                 "evidence": [
-                    {"id": p["id"], "title": p["title"], "text": p["text"]}
+                    {
+                        "id": p["id"], "title": p["title"], "text": p["text"],
+                        "source_note": p["source"].get("notice", ""),
+                    }
                     for p in passages
                 ],
             }, ensure_ascii=False),

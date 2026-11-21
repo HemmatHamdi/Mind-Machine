@@ -5,11 +5,12 @@ This branch wires the FastAPI chat endpoint to Google's Gemini 3.5 Flash-Lite
 and the per-user rate limit remain in place.
 
 **Current scope:** local Arabic/BM25 retrieval, evidence-only prompts and source-ID
-checks are implemented. However, the verified Baccalaureate corpus is still
-empty: Ministry pages were inaccessible and Gazette PDFs require a copy request.
-Only pending source records are included. Until official text is reviewed,
-`/chat` returns a clear Arabic referral **without calling Gemini**. This is not
-yet a working source-grounded educational demo.
+checks are implemented. Seven FAQ summaries from a reviewed Maspero report
+attributing the answers to the Ministry of Education are enabled for the demo.
+Answers visibly label this as a government-media report, not the original decree.
+Ministry/Gazette original texts remain pending. Unsupported questions return an
+Arabic referral **without calling Gemini**. This limited corpus does not cover
+all pathways or admission rules, and its model answers have not been live-tested.
 
 ## Run and configure
 

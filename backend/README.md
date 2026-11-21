@@ -4,10 +4,11 @@ FastAPI `POST /chat` keeps HTTP Basic authentication and a per-user, in-process
 rate limit. Its opt-in model adapter can call Google's **Gemini 3.5 Flash-Lite**
 (`gemini-3.5-flash-lite`) at most once per request, after local evidence retrieval.
 
-**Current status: retrieval is implemented, but the verified education corpus is
-empty.** The shipped configuration returns a source-unavailable handover without
-calling the model. Official document text is still needed; catalogue records and
-search snippets are not verified education facts. Do not use real student data.
+**Current status: seven reviewed FAQ summaries from a Maspero report are enabled.**
+Maspero is the National Media Authority website; its 12 November 2026 article
+attributes these FAQs to the Ministry of Education. This is a Ministry-attributed
+government-media report, **not a reviewed original decree**. It is a narrow demo
+corpus, not a complete or legally authoritative guide. Do not use real student data.
 
 ## Grounding and source status
 
@@ -16,7 +17,15 @@ The flow is `/chat` → authentication/rate limit → local Arabic keyword/BM25 
 No vector database, embeddings, new account, network scraper or paid fallback is
 needed. The public request/response shape remains `message` → `reply`.
 
-`data/knowledge.json` contains pending source records only:
+`data/knowledge.json` contains one reviewed report and three pending source records:
+
+- [Maspero FAQ report](https://www.maspero.eg/egypt/2026/11/12/1005044/التعليم-تستعرض-الأسئلة-الشائعة-وإجاباتها-حول-نظام-شهادة-البكالوريا-المصرية):
+  full text reviewed on 22 November 2026. The publisher's
+  [about page](https://www.maspero.eg/page/1) identifies `maspero.eg` as its unified
+  website. Seven team-written summaries preserve the report's conditions and
+  exceptions: financial culture assessment, second-language restrictions,
+  guidance meetings, exam Arabization, attendance, projects and transfer after
+  failing second-year General Secondary. No images or full article text are copied.
 
 - Decree 213/2025: the Gazette catalogue identifies the decree, but the PDF link
   requests a copy. The legal text has not been reviewed.
@@ -24,9 +33,12 @@ needed. The public request/response shape remains `message` → `reply`.
   as its full text.
 - Ministry statement of 17 August 2026: direct fetch and browser returned 403.
 
-The source search also found a public Maspero report relaying Ministry FAQs.
-It is not the original Ministry decree and has **not** been substituted for it.
-No facts from LawHub, news, AI memory or search summaries are enabled.
+The report has `status: reviewed_report`, not `verified`. A passage's `verified:
+true` means its summary was checked against its named source, not against an
+unavailable decree. Every answer citing the report gets a backend-added notice
+identifying the publisher, publication date and original-decree limitation.
+This notice is also sent with the evidence to the model. The pending decrees
+remain excluded. No facts from LawHub, AI memory or search snippets are enabled.
 
 To add evidence, first obtain a public Ministry/Gazette document and review its
 relevant text and date. Set its source `status` to `verified` only after this
@@ -99,23 +111,26 @@ uvicorn approved_main:app --host 0.0.0.0 --port 8000
 ```
 
 The adapter makes at most one model request, without retry or paid fallback.
-No request is made at startup or when no evidence is found. The present empty
-verified corpus means **all questions return the handover without inference**.
+No request is made at startup or when no evidence is found. Questions outside the
+seven FAQs (for example, all pathway names, subject counts, fees or admissions)
+should return the handover rather than model-memory answers.
 
 ## Test the API
 
 ```bash
 curl -s -u demo:YOUR_PASSWORD \
   -H 'Content-Type: application/json' \
-  -d '{"message":"ما هي مسارات البكالوريا المصرية؟"}' \
+  -d '{"message":"متى لقاءات المرشد التعليمي في أولى ثانوي؟"}' \
   http://localhost:8000/chat
 ```
 
 With the execution flag off, the endpoint returns `503`. With it on, a valid
-authenticated request returns `{"reply":"..."}`. With the current corpus this is a
-fixed Arabic source-unavailable message, not a model answer. After official
-passages are reviewed and enabled, an evidence-matched question can produce a
-model answer with citations. A new live test still needs separate approval.
+authenticated request returns `{"reply":"..."}`. A matched FAQ can produce a model
+answer with source IDs, the report attribution, its link and review date. An
+unsupported question returns the fixed source-unavailable message without a model
+request. The curl above is a **live inference** if execution is enabled; do not
+run it until separately approved. This report-grounded flow has only been tested
+with fake model output, not a live Gemini response.
 
 ## Offline tests
 
@@ -126,8 +141,9 @@ python -m pytest tests -q
 
 Tests use fake Gemini responses and blocked outbound networking. They verify
 request wiring only; they do not prove the real API key, model access, free-tier
-status, quota, or a live grounded response. Retrieval tests use explicitly
-fictional passages under `example.invalid`; those are not shipped as real data.
+status, quota, or a live grounded response. Retrieval tests use the reviewed
+report corpus and fictional fixtures under `example.invalid`; fictional fixtures
+are not shipped as real data. API wiring tests use fake model output.
 
 Official references:
 - [Gemini 3.5 Flash-Lite model](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite)

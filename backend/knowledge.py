@@ -36,7 +36,8 @@ class KnowledgeBase:
             {**passage, "source": data["sources"][passage["source_id"]]}
             for passage in data["passages"]
             if passage.get("verified") is True
-            and data["sources"][passage["source_id"]]["status"] == "verified"
+            and data["sources"][passage["source_id"]]["status"]
+            in {"verified", "reviewed_report"}
         ]
         self.documents = [
             Counter(tokens(passage["title"] + " " + passage["text"]))
@@ -87,4 +88,11 @@ def cited_reply(reply: str, passages: list[dict]) -> str:
         f"آخر مراجعة للمقطع: {passage['checked_on']}"
         for passage in passages if passage["id"] in citations
     ]
-    return reply + "\n\nالمصادر:\n" + "\n\n".join(references)
+    notices = list(dict.fromkeys(
+        passage["source"]["notice"]
+        for passage in passages
+        if passage["id"] in citations
+        and passage["source"]["status"] == "reviewed_report"
+    ))
+    prefix = "\n".join(notices) + "\n\n" if notices else ""
+    return prefix + reply + "\n\nالمصادر:\n" + "\n\n".join(references)

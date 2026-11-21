@@ -68,6 +68,7 @@ def test_adapter_calls_selected_model_once_without_storing_history(demo_knowledg
             "evidence": [{
                 "id": "TEST1", "title": "المسار التجريبي",
                 "text": demo_knowledge.passages[0]["text"],
+                "source_note": "",
             }],
         }, ensure_ascii=False),
         "system_instruction": SYSTEM_INSTRUCTION,
