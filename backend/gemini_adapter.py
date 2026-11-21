@@ -24,7 +24,8 @@ class GeminiUnavailable(Exception):
 
 
 def _client_factory(api_key: str):
-    from google import genai, types
+    from google import genai
+    from google.genai import types
 
     return genai.Client(
         api_key=api_key,

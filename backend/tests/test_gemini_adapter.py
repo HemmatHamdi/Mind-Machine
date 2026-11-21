@@ -76,13 +76,15 @@ def test_default_google_client_disables_sdk_retries(monkeypatch):
             self.kwargs = kwargs
 
     fake_google = ModuleType("google")
-    fake_google.genai = SimpleNamespace(
-        Client=lambda **kwargs: calls.append(kwargs) or kwargs
-    )
-    fake_google.types = SimpleNamespace(
-        HttpOptions=HttpOptions, HttpRetryOptions=HttpRetryOptions,
-    )
+    fake_genai = ModuleType("google.genai")
+    fake_types = ModuleType("google.genai.types")
+    fake_genai.Client = lambda **kwargs: calls.append(kwargs) or kwargs
+    fake_types.HttpOptions = HttpOptions
+    fake_types.HttpRetryOptions = HttpRetryOptions
+    fake_google.genai = fake_genai
     monkeypatch.setitem(sys.modules, "google", fake_google)
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+    monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
 
     client = _client_factory("synthetic-key")
     assert client["api_key"] == "synthetic-key"
