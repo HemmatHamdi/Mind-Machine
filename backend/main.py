@@ -103,7 +103,7 @@ def create_app(
             raise HTTPException(
                 status_code=503,
                 detail="AI generation is temporarily unavailable. "
-                       "The free quota may be unavailable or require administrator review.",
+                       "Please check the model configuration and API quota.",
             ) from None
 
     return app

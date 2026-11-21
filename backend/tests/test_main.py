@@ -103,6 +103,24 @@ def test_openapi_preserves_request_contract_and_documents_unavailability():
     assert route["responses"]["503"]["description"] == AI_UNAVAILABLE_MESSAGE
 
 
+def test_provider_failure_uses_generic_model_configuration_message():
+    class FailingGenerator:
+        async def generate(self, message):
+            raise RuntimeError("synthetic api key and user prompt")
+
+    app = create_app(generator=FailingGenerator())
+    client = TestClient(app)
+    client.auth = (TEST_USER, TEST_PASSWORD)
+    response = client.post("/chat", json={"message": PRIVATE_MESSAGE})
+    assert response.status_code == 503
+    assert response.json() == {
+        "detail": "AI generation is temporarily unavailable. "
+                  "Please check the model configuration and API quota."
+    }
+    assert "synthetic api key" not in response.text
+    assert PRIVATE_MESSAGE not in response.text
+
+
 def test_runtime_and_template_have_no_provider_configuration_or_client():
     backend = Path(__file__).resolve().parents[1]
     for path in backend.glob("*.py"):
