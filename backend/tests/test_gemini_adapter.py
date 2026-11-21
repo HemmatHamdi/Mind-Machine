@@ -1,6 +1,8 @@
 """Gemini adapter and opt-in wiring tests. All provider calls are faked."""
 
 import asyncio
+import sys
+from types import ModuleType
 from types import SimpleNamespace
 
 from fastapi.testclient import TestClient
@@ -58,6 +60,33 @@ def test_provider_error_is_generic_and_not_retried():
     assert len(interactions.calls) == 1
     assert "synthetic key" not in str(caught.value)
     assert "synthetic question" not in str(caught.value)
+
+
+def test_default_google_client_disables_sdk_retries(monkeypatch):
+    from gemini_adapter import _client_factory
+
+    calls = []
+
+    class HttpRetryOptions:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class HttpOptions:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    fake_google = ModuleType("google")
+    fake_google.genai = SimpleNamespace(
+        Client=lambda **kwargs: calls.append(kwargs) or kwargs
+    )
+    fake_google.types = SimpleNamespace(
+        HttpOptions=HttpOptions, HttpRetryOptions=HttpRetryOptions,
+    )
+    monkeypatch.setitem(sys.modules, "google", fake_google)
+
+    client = _client_factory("synthetic-key")
+    assert client["api_key"] == "synthetic-key"
+    assert calls[0]["http_options"].kwargs["retry_options"].kwargs == {"attempts": 1}
 
 
 @pytest.mark.parametrize("message", ["", "  ", "x" * 4_001])

@@ -24,9 +24,14 @@ class GeminiUnavailable(Exception):
 
 
 def _client_factory(api_key: str):
-    from google import genai
+    from google import genai, types
 
-    return genai.Client(api_key=api_key)
+    return genai.Client(
+        api_key=api_key,
+        http_options=types.HttpOptions(
+            retry_options=types.HttpRetryOptions(attempts=1),
+        ),
+    )
 
 
 class GeminiAdapter:
