@@ -1,57 +1,79 @@
-# Masari chatbot backend — minimal demo setup
+# Masari backend — Gemini API
 
-A FastAPI `POST /chat` endpoint (HTTP Basic login, per-user rate limit) that calls a
-**private Hugging Face ZeroGPU Space** running `Qwen/Qwen2.5-1.5B-Instruct`.
-Quota is limited by one local SQLite file: at most 6 generations, one at a time.
+FastAPI `POST /chat` keeps HTTP Basic authentication and a per-user, in-process
+rate limit. Its opt-in model adapter calls Google's **Gemini 3.5 Flash-Lite**
+(`gemini-3.5-flash-lite`) once per request.
 
-> Status: tested **offline with fakes only**. No live response has been produced yet.
-> The default `main:app` still returns 503 until you deliberately enable the demo
-> entrypoint below.
-
-## How it works
-`client → FastAPI (login, rate limit) → local ledger charges 1 attempt → private Space
-(checks a signed tag, runs the already-loaded model on a 30 s GPU slot) → reply`.
-The shared key is never sent; each request carries a short-lived signed tag.
+**Important:** this is a model connection, not a Baccalaureate knowledge system.
+No verified-source retrieval is implemented yet. The adapter instructs Gemini not
+to present current rules or pathways as verified facts and to refer users to an
+official source or school counselor. Do not use real student or personal data.
 
 ## Setup
+
 ```bash
 cd backend
-python -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt          # add requirements-dev.txt to run tests
-python create_chat_user.py --username demo   # prompts for a password, writes backend/.env
+python -m venv .venv
+. .venv/bin/activate
+pip install -r requirements.txt
+python create_chat_user.py --username demo
 ```
 
-## Configuration (environment / secrets — never commit)
-| Name | Where | Purpose |
+## Configuration
+
+Set these in the backend runtime's secrets/configuration; never commit `.env`:
+
+| Name | Required value | Purpose |
 | --- | --- | --- |
-| `CHAT_AUTH_USERS` | backend | set by `create_chat_user.py` |
-| `HF_TOKEN` | backend | **read**-scope token for the private Space |
-| `ZEROGPU_BACKEND_KEY` | backend **and** Space | random string, 32+ chars |
-| `ZEROGPU_EXECUTION_APPROVED=true` | backend | turns the demo entrypoint on |
-| `ZEROGPU_BUDGET_PATH` | backend | absolute path of the ledger file |
-| `SPACE_MODEL_INIT_APPROVED=true` | Space | load Qwen at Space startup |
-| `SPACE_EXECUTION_APPROVED=true` | Space | accept signed requests |
+| `CHAT_AUTH_USERS` | Created by `create_chat_user.py` | HTTP Basic accounts |
+| `GEMINI_API_KEY` | Key for a Google AI Studio **Free Tier** project | Authenticates Gemini API requests |
+| `GEMINI_EXECUTION_APPROVED` | Keep unset/`false` until a separately approved live test | Explicitly enables model calls |
+| `CHAT_RATE_LIMIT_REQUESTS` | Optional; default `10` | Per-user request limit |
+| `CHAT_RATE_LIMIT_WINDOW_SECONDS` | Optional; default `60` | Rate-limit window |
 
-All flags are off by default. Create and arm the ledger once, using the numbers on
-your Hugging Face quota page (no network use):
-```bash
-python init_ledger.py --path /abs/path/.zerogpu-budget.sqlite3 \
-  --gpu-seconds-remaining 300 --runs-remaining 8 \
-  --confirm-free-account --confirm-no-paid-usage
-```
-Run **one** process only: `uvicorn approved_main:app --host 0.0.0.0 --port 8000`.
+Use a Free Tier project with billing/paid usage disabled. This code does not detect
+the Google project tier or prevent paid usage if the key is attached to a billed
+project. Google may use Free Tier prompts and responses to improve its products;
+`store=False` disables interaction-history storage but does not change that Free
+Tier data-use policy. Keep tests fictional and do not send personal information.
+The model's availability and quotas depend on Google's current account limits.
 
-## Try the API
-```bash
-curl -s -u demo:YOUR_PASSWORD -H 'Content-Type: application/json' \
-  -d '{"message": "Say hello in one sentence."}' http://localhost:8000/chat
-# -> {"reply": "..."}   (503 = disabled, quota used, or needs operator review)
-```
-Each request, including failures, spends one of the 6 attempts. A timeout or error
-locks further generations until the ledger is reviewed; there is no auto-retry.
+The default `main:app` remains disabled. After separate approval for a live model
+request, enable `GEMINI_EXECUTION_APPROVED=true` and run one process:
 
-## Tests (offline, network blocked)
 ```bash
-pip install -r requirements-dev.txt && python -m pytest tests -q
+uvicorn approved_main:app --host 0.0.0.0 --port 8000
 ```
-See `space_app/README.md` for the Space bundle and its first-run steps.
+
+The adapter makes one model request, without retry or paid fallback. No request is
+made at startup.
+
+## Test the API
+
+```bash
+curl -s -u demo:YOUR_PASSWORD \
+  -H 'Content-Type: application/json' \
+  -d '{"message":"ما هي مسارات البكالوريا المصرية؟"}' \
+  http://localhost:8000/chat
+```
+
+With the execution flag off, the endpoint returns `503`. With it on, a valid
+authenticated request returns `{"reply":"..."}`. Until verified-source retrieval
+is added, the system instruction asks the model to say it cannot verify current
+Baccalaureate facts; this response is not yet a source-grounded answer.
+
+## Offline tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest tests -q
+```
+
+Tests use fake Gemini responses and blocked outbound networking. They verify
+request wiring only; they do not prove the real API key, model access, free-tier
+status, quota, or a live response.
+
+Official references:
+- [Gemini 3.5 Flash-Lite model](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite)
+- [Gemini API getting started](https://ai.google.dev/gemini-api/docs/quickstart)
+- [Gemini API pricing and Free Tier terms](https://ai.google.dev/gemini-api/docs/pricing?model=gemini-3.5-flash-lite)

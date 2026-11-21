@@ -397,28 +397,18 @@ def test_space_failure_is_generic_and_has_no_quota_or_database_code(load_space):
 
 # ---------------- entrypoint ----------------
 
-def test_future_entrypoint_stays_disabled_by_default(monkeypatch):
-    monkeypatch.delenv("ZEROGPU_EXECUTION_APPROVED", raising=False)
+def test_gemini_entrypoint_stays_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("GEMINI_EXECUTION_APPROVED", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
     module = importlib.import_module("approved_main")
     assert module.build_app().title == "Masari Chat API"
 
 
-@pytest.mark.parametrize("setting", ["missing", "bad_attempts", "bad_database"])
-def test_future_entrypoint_bad_configuration_fails_closed(monkeypatch, tmp_path, setting):
+def test_gemini_entrypoint_without_key_fails_closed(monkeypatch):
     import approved_main
 
-    monkeypatch.setenv("ZEROGPU_EXECUTION_APPROVED", "true")
-    monkeypatch.setenv("HF_TOKEN", "synthetic-read-token")
-    monkeypatch.setenv("ZEROGPU_BACKEND_KEY", KEY)
-    path = tmp_path / "budget.sqlite3"
-    QuotaBudget(path)
-    monkeypatch.setenv("ZEROGPU_BUDGET_PATH", str(path))
-    if setting == "missing":
-        monkeypatch.delenv("ZEROGPU_BUDGET_PATH")
-    elif setting == "bad_attempts":
-        monkeypatch.setenv("ZEROGPU_MAX_ATTEMPTS", "7")
-    else:
-        path.write_bytes(b"invalid database")
+    monkeypatch.setenv("GEMINI_EXECUTION_APPROVED", "true")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     assert approved_main.build_app().title == "Masari Chat API"
 
 

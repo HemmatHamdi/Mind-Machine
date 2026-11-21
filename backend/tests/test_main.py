@@ -18,7 +18,7 @@ PRIVATE_MESSAGE = "private test input"
 RETIRED_SETTINGS = (
     "GROQ_API_KEY", "GROQ_MODEL", "GROQ_FREE_PLAN_CONFIRMED",
     "GROQ_TIMEOUT_SECONDS", "GROQ_MAX_COMPLETION_TOKENS",
-    "GEMINI_API_KEY", "GEMINI_MODEL", "GEMINI_TIMEOUT_SECONDS",
+    "GEMINI_MODEL", "GEMINI_TIMEOUT_SECONDS",
 )
 
 
@@ -106,6 +106,8 @@ def test_openapi_preserves_request_contract_and_documents_unavailability():
 def test_runtime_and_template_have_no_provider_configuration_or_client():
     backend = Path(__file__).resolve().parents[1]
     for path in backend.glob("*.py"):
+        if path.name in {"gemini_adapter.py", "approved_main.py"}:
+            continue
         tree = ast.parse(path.read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.Import):
@@ -121,10 +123,13 @@ def test_runtime_and_template_have_no_provider_configuration_or_client():
         assert "https://" not in text
         assert "groq" not in text
         assert "gemini" not in text
+    gemini_source = (backend / "gemini_adapter.py").read_text()
+    assert 'MODEL_ID = "gemini-3.5-flash-lite"' in gemini_source
+    assert "store=False" in gemini_source
     template = (backend / ".env.example").read_text()
     requirements = (backend / "requirements.txt").read_text().lower()
     for name in RETIRED_SETTINGS:
         assert name not in template
     assert "httpx" not in requirements
     assert "groq" not in requirements
-    assert "gemini" not in requirements
+    assert "google-genai" in requirements

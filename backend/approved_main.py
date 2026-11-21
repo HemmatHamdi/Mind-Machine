@@ -1,34 +1,21 @@
-"""Future operator-selected entrypoint; NEVER used for default main:app.
-
-Code preparation only. Do not enable execution or arm ledgers before approval.
-"""
+"""Opt-in Gemini entrypoint; the default main:app remains disabled."""
 
 import os
-from pathlib import Path
 
+from gemini_adapter import GeminiAdapter
 from main import create_app
-from space_transport import PrivateSpaceClient
-from zerogpu import QuotaBudget, ZeroGPUAdapter
 
 
-def build_app():
-    if os.getenv("ZEROGPU_EXECUTION_APPROVED") != "true":
+def build_app(*, client_factory=None):
+    if os.getenv("GEMINI_EXECUTION_APPROVED") != "true":
         return create_app()
-    try:
-        path = Path(os.environ["ZEROGPU_BUDGET_PATH"])
-        if not path.is_absolute() or not path.is_file() or path.is_symlink():
-            return create_app()
-        attempts = int(os.getenv("ZEROGPU_MAX_ATTEMPTS", "6"))
-        budget = QuotaBudget(path, max_attempts=attempts)
-        client = PrivateSpaceClient(
-            token=os.environ["HF_TOKEN"], execution_approved=True,
-        )
-        adapter = ZeroGPUAdapter(
-            client, budget, dispatch_key=os.environ["ZEROGPU_BACKEND_KEY"]
-        )
-        return create_app(generator=adapter)
-    except Exception:
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
         return create_app()
+    factory = client_factory
+    if factory is None:
+        return create_app(generator=GeminiAdapter(api_key=api_key))
+    return create_app(generator=GeminiAdapter(api_key=api_key, client_factory=factory))
 
 
 app = build_app()
