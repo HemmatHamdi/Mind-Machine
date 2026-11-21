@@ -1,0 +1,26 @@
+{
+  "sources": {
+    "decree_213_2025": {
+      "title": "الوقائع المصرية، العدد 202 تابع (ز)، قرار 213 لسنة 2025",
+      "url": "https://dspace.id.com.eg/items/e0e38eca-7e64-4ed6-b36d-98e5204fe33d",
+      "status": "pending",
+      "checked_on": "2026-11-22",
+      "note": "Catalogue identifies decree 213/2025. Full text was not reviewed; the file link requests a copy. Catalogue metadata is not evidence for the education rules."
+    },
+    "gazette_228_2026": {
+      "title": "الوقائع المصرية، العدد 228، 15 أكتوبر 2026",
+      "url": "https://dspace.id.com.eg/items/37e6e2c6-0f38-4964-862e-6eba91356985",
+      "status": "pending",
+      "checked_on": "2026-11-22",
+      "note": "Candidate issue from source search for decree 150/2026; its contents were not verified. File link requests a copy. Do not treat this as a reviewed decree."
+    },
+    "ministry_2026_08_17": {
+      "title": "وزارة التربية والتعليم: آليات تطبيق نظام شهادة البكالوريا، 17 أغسطس 2026",
+      "url": "https://moe.gov.eg/ar/what-s-on/news/mo-17-8-i/",
+      "status": "pending",
+      "checked_on": "2026-11-22",
+      "note": "Full article returned HTTP 403, including in browser inspection. Search summaries were not promoted into verified content."
+    }
+  },
+  "passages": []
+}

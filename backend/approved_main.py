@@ -6,7 +6,7 @@ from gemini_adapter import GeminiAdapter
 from main import create_app
 
 
-def build_app(*, client_factory=None):
+def build_app(*, client_factory=None, knowledge=None):
     if os.getenv("GEMINI_EXECUTION_APPROVED") != "true":
         return create_app()
     api_key = os.getenv("GEMINI_API_KEY")
@@ -14,8 +14,10 @@ def build_app(*, client_factory=None):
         return create_app()
     factory = client_factory
     if factory is None:
-        return create_app(generator=GeminiAdapter(api_key=api_key))
-    return create_app(generator=GeminiAdapter(api_key=api_key, client_factory=factory))
+        return create_app(generator=GeminiAdapter(api_key=api_key, knowledge=knowledge))
+    return create_app(generator=GeminiAdapter(
+        api_key=api_key, client_factory=factory, knowledge=knowledge,
+    ))
 
 
 app = build_app()

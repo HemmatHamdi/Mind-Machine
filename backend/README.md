@@ -1,13 +1,66 @@
 # Masari backend — Gemini API
 
 FastAPI `POST /chat` keeps HTTP Basic authentication and a per-user, in-process
-rate limit. Its opt-in model adapter calls Google's **Gemini 3.5 Flash-Lite**
-(`gemini-3.5-flash-lite`) once per request.
+rate limit. Its opt-in model adapter can call Google's **Gemini 3.5 Flash-Lite**
+(`gemini-3.5-flash-lite`) at most once per request, after local evidence retrieval.
 
-**Important:** this is a model connection, not a Baccalaureate knowledge system.
-No verified-source retrieval is implemented yet. The adapter instructs Gemini not
-to present current rules or pathways as verified facts and to refer users to an
-official source or school counselor. Do not use real student or personal data.
+**Current status: retrieval is implemented, but the verified education corpus is
+empty.** The shipped configuration returns a source-unavailable handover without
+calling the model. Official document text is still needed; catalogue records and
+search snippets are not verified education facts. Do not use real student data.
+
+## Grounding and source status
+
+The flow is `/chat` → authentication/rate limit → local Arabic keyword/BM25 search
+→ reviewed passages → Gemini → citation-ID check → reply with source links/dates.
+No vector database, embeddings, new account, network scraper or paid fallback is
+needed. The public request/response shape remains `message` → `reply`.
+
+`data/knowledge.json` contains pending source records only:
+
+- Decree 213/2025: the Gazette catalogue identifies the decree, but the PDF link
+  requests a copy. The legal text has not been reviewed.
+- Gazette issue 228 of 15 October 2026: a candidate for decree 150/2026, not verified
+  as its full text.
+- Ministry statement of 17 August 2026: direct fetch and browser returned 403.
+
+The source search also found a public Maspero report relaying Ministry FAQs.
+It is not the original Ministry decree and has **not** been substituted for it.
+No facts from LawHub, news, AI memory or search summaries are enabled.
+
+To add evidence, first obtain a public Ministry/Gazette document and review its
+relevant text and date. Set its source `status` to `verified` only after this
+review. Add short, accurate passages (preferably under 600 characters each):
+
+```json
+{
+  "id": "DOC213_A1",
+  "source_id": "decree_213_2025",
+  "title": "Reviewed topic and article number",
+  "text": "Replace with the reviewed passage, not an AI guess.",
+  "checked_on": "YYYY-MM-DD",
+  "verified": false
+}
+```
+
+This is a schema example, not education content. Use unique passage IDs consisting
+of uppercase letters, digits or underscores. Set `verified` to `true` only after
+checking the text against the actual official source. Record the article/page in
+the title, preserve conditions/exceptions, and restart the backend after changes.
+No unreviewed passage should be enabled just to make a demo return a model answer.
+
+Retrieval needs at least two meaningful matching words and at least half the
+question's meaningful words in a passage; it returns at most three passages.
+Weak/no matches return a fixed Arabic referral to the Ministry or school counselor
+before creating a model client. This conservative lexical heuristic is not a
+semantic relevance or completeness guarantee.
+
+The prompt limits facts to retrieved evidence. An answer must cite retrieved
+`[PASSAGE_ID]` values; missing or unknown IDs and model-written URLs cause the
+fixed handover instead. The backend appends only reviewed links and review dates.
+Citation validation does **not** prove that every claim follows from its cited
+passage. Real answer quality, mixed-topic questions, personal-choice refusals and
+prompt injection still need evaluation before using this with students.
 
 ## Setup
 
@@ -45,8 +98,9 @@ request, enable `GEMINI_EXECUTION_APPROVED=true` and run one process:
 uvicorn approved_main:app --host 0.0.0.0 --port 8000
 ```
 
-The adapter makes one model request, without retry or paid fallback. No request is
-made at startup.
+The adapter makes at most one model request, without retry or paid fallback.
+No request is made at startup or when no evidence is found. The present empty
+verified corpus means **all questions return the handover without inference**.
 
 ## Test the API
 
@@ -58,9 +112,10 @@ curl -s -u demo:YOUR_PASSWORD \
 ```
 
 With the execution flag off, the endpoint returns `503`. With it on, a valid
-authenticated request returns `{"reply":"..."}`. Until verified-source retrieval
-is added, the system instruction asks the model to say it cannot verify current
-Baccalaureate facts; this response is not yet a source-grounded answer.
+authenticated request returns `{"reply":"..."}`. With the current corpus this is a
+fixed Arabic source-unavailable message, not a model answer. After official
+passages are reviewed and enabled, an evidence-matched question can produce a
+model answer with citations. A new live test still needs separate approval.
 
 ## Offline tests
 
@@ -71,7 +126,8 @@ python -m pytest tests -q
 
 Tests use fake Gemini responses and blocked outbound networking. They verify
 request wiring only; they do not prove the real API key, model access, free-tier
-status, quota, or a live response.
+status, quota, or a live grounded response. Retrieval tests use explicitly
+fictional passages under `example.invalid`; those are not shipped as real data.
 
 Official references:
 - [Gemini 3.5 Flash-Lite model](https://ai.google.dev/gemini-api/docs/models/gemini-3.5-flash-lite)

@@ -4,10 +4,12 @@ This branch wires the FastAPI chat endpoint to Google's Gemini 3.5 Flash-Lite
 (`gemini-3.5-flash-lite`) behind an explicit opt-in flag. HTTP Basic authentication
 and the per-user rate limit remain in place.
 
-**Current scope:** one user message is sent to the model and one reply is returned.
-There is not yet a Baccalaureate knowledge base or source retrieval, so this is
-not yet a grounded Masari guide. The system instruction tells the model not to
-present current rules or pathways as verified facts.
+**Current scope:** local Arabic/BM25 retrieval, evidence-only prompts and source-ID
+checks are implemented. However, the verified Baccalaureate corpus is still
+empty: Ministry pages were inaccessible and Gazette PDFs require a copy request.
+Only pending source records are included. Until official text is reviewed,
+`/chat` returns a clear Arabic referral **without calling Gemini**. This is not
+yet a working source-grounded educational demo.
 
 ## Run and configure
 
@@ -16,8 +18,9 @@ warning, API example, and offline tests. The default `main:app` makes no model
 calls. The explicit `approved_main:app` entrypoint requires
 `GEMINI_EXECUTION_APPROVED=true` and `GEMINI_API_KEY`.
 
-No Gemini request is made on startup. The adapter makes one request per valid
-`POST /chat`, with no automatic retry or paid fallback. Keep Google billing/paid
+No Gemini request is made on startup. With reviewed evidence, the adapter makes
+at most one request per valid `POST /chat`, with no retry or paid fallback. No
+evidence means no model request. Keep Google billing/paid
 usage disabled; this code does not enforce the account's tier.
 
 The existing private Hugging Face Space files are still in this repository from
