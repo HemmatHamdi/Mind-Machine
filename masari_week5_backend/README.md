@@ -1,5 +1,12 @@
 # Masari — Week 5: First Model Call From Our Backend
 
+> **Historical demo only — do not use the setup commands below.**
+> The old Groq runtime was removed during Gemini consolidation. `index.html`
+> is preserved as a historical artifact associated with the team's earlier
+> Week 5 recording, not a served or tested UI for the current backend.
+> Use [`../backend/README.md`](../backend/README.md) for the only supported
+> runtime. The remainder of this document records the earlier implementation.
+
 ## What this package does
 - `GET /` serves a minimal demo chat UI (same-origin).
 - `GET /health` verifies the backend is reachable without contacting Groq.

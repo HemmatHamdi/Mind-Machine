@@ -1,0 +1,181 @@
+"""Gemini adapter and opt-in wiring tests. All provider calls are faked."""
+
+import asyncio
+import json
+import sys
+from types import ModuleType
+from types import SimpleNamespace
+
+from fastapi.testclient import TestClient
+import pytest
+
+from gemini_adapter import (
+    GeminiAdapter, GeminiUnavailable, MAX_OUTPUT_TOKENS, MODEL_ID,
+    SYSTEM_INSTRUCTION,
+)
+from security import hash_password
+from knowledge import KnowledgeBase
+
+
+@pytest.fixture
+def demo_knowledge():
+    return KnowledgeBase({
+        "sources": {
+            "fixture": {
+                "status": "verified", "title": "Fictional test document",
+                "url": "https://example.invalid/fictional",
+            },
+        },
+        "passages": [{
+            "id": "TEST1", "source_id": "fixture", "verified": True,
+            "checked_on": "2026-11-22", "title": "المسار التجريبي",
+            "text": "هذه بيانات خيالية لاختبار البحث في المسار التجريبي فقط.",
+        }],
+    })
+
+
+class FakeInteractions:
+    def __init__(self, output="إجابة تجريبية"):
+        self.output = output
+        self.calls = []
+
+    def create(self, **kwargs):
+        self.calls.append(kwargs)
+        if isinstance(self.output, Exception):
+            raise self.output
+        return SimpleNamespace(output_text=self.output)
+
+
+def test_adapter_calls_selected_model_once_without_storing_history(demo_knowledge):
+    interactions = FakeInteractions("  رد تجريبي [TEST1]  ")
+    factories = []
+
+    def factory(api_key):
+        factories.append(api_key)
+        return SimpleNamespace(interactions=interactions)
+
+    adapter = GeminiAdapter(
+        api_key="synthetic-gemini-key", client_factory=factory, knowledge=demo_knowledge,
+    )
+    result = asyncio.run(adapter.generate("المسار التجريبي"))
+    assert result.startswith("رد تجريبي [TEST1]")
+    assert "https://example.invalid/fictional" in result
+    assert factories == ["synthetic-gemini-key"]
+    assert interactions.calls == [{
+        "model": "gemini-3.5-flash-lite",
+        "input": json.dumps({
+            "question": "المسار التجريبي",
+            "evidence": [{
+                "id": "TEST1", "title": "المسار التجريبي",
+                "text": demo_knowledge.passages[0]["text"],
+                "source_note": "",
+            }],
+        }, ensure_ascii=False),
+        "system_instruction": SYSTEM_INSTRUCTION,
+        "generation_config": {"max_output_tokens": MAX_OUTPUT_TOKENS},
+        "store": False,
+    }]
+    assert MODEL_ID == "gemini-3.5-flash-lite"
+    assert "synthetic-gemini-key" not in repr(interactions.calls)
+
+
+def test_provider_error_is_generic_and_not_retried(demo_knowledge):
+    interactions = FakeInteractions(RuntimeError("synthetic key and user prompt"))
+    adapter = GeminiAdapter(
+        api_key="synthetic-key",
+        client_factory=lambda api_key: SimpleNamespace(interactions=interactions),
+        knowledge=demo_knowledge,
+    )
+    with pytest.raises(GeminiUnavailable) as caught:
+        asyncio.run(adapter.generate("المسار التجريبي"))
+    assert len(interactions.calls) == 1
+    assert "synthetic key" not in str(caught.value)
+    assert "synthetic question" not in str(caught.value)
+
+
+@pytest.mark.parametrize("output", [
+    "رد بدون مرجع", "رد [TEST999]", "رد [TEST1] https://invented.invalid",
+])
+def test_adapter_replaces_invalid_citations_without_retry(demo_knowledge, output):
+    from knowledge import NO_EVIDENCE_REPLY
+
+    interactions = FakeInteractions(output)
+    adapter = GeminiAdapter(
+        api_key="synthetic-key", knowledge=demo_knowledge,
+        client_factory=lambda api_key: SimpleNamespace(interactions=interactions),
+    )
+    assert asyncio.run(adapter.generate("المسار التجريبي")) == NO_EVIDENCE_REPLY
+    assert len(interactions.calls) == 1
+
+
+def test_default_google_client_disables_sdk_retries(monkeypatch):
+    from gemini_adapter import _client_factory
+
+    calls = []
+
+    class HttpRetryOptions:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    class HttpOptions:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    fake_google = ModuleType("google")
+    fake_genai = ModuleType("google.genai")
+    fake_types = ModuleType("google.genai.types")
+    fake_genai.Client = lambda **kwargs: calls.append(kwargs) or kwargs
+    fake_types.HttpOptions = HttpOptions
+    fake_types.HttpRetryOptions = HttpRetryOptions
+    fake_google.genai = fake_genai
+    monkeypatch.setitem(sys.modules, "google", fake_google)
+    monkeypatch.setitem(sys.modules, "google.genai", fake_genai)
+    monkeypatch.setitem(sys.modules, "google.genai.types", fake_types)
+
+    client = _client_factory("synthetic-key")
+    assert client["api_key"] == "synthetic-key"
+    assert calls[0]["http_options"].kwargs["retry_options"].kwargs == {"attempts": 1}
+
+
+@pytest.mark.parametrize("message", ["", "  ", "x" * 4_001])
+def test_invalid_input_never_constructs_client(message):
+    def forbidden(api_key):
+        pytest.fail("Invalid input must not construct a provider client.")
+
+    adapter = GeminiAdapter(api_key="synthetic-key", client_factory=forbidden)
+    with pytest.raises(GeminiUnavailable):
+        asyncio.run(adapter.generate(message))
+
+
+def test_opt_in_entrypoint_calls_fake_model_only_after_chat_request(
+    monkeypatch, demo_knowledge,
+):
+    import approved_main
+
+    interactions = FakeInteractions("رد من النموذج الوهمي [TEST1]")
+    factories = []
+
+    def factory(api_key):
+        factories.append(api_key)
+        return SimpleNamespace(interactions=interactions)
+
+    monkeypatch.setenv("GEMINI_EXECUTION_APPROVED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("CHAT_AUTH_USERS", __import__("json").dumps({
+        "demo": hash_password("synthetic-password-123"),
+    }))
+    monkeypatch.setenv("CHAT_RATE_LIMIT_REQUESTS", "10")
+    monkeypatch.setenv("CHAT_RATE_LIMIT_WINDOW_SECONDS", "60")
+
+    app = approved_main.build_app(client_factory=factory, knowledge=demo_knowledge)
+    assert factories == [] and interactions.calls == []
+    with TestClient(app) as client:
+        response = client.post(
+            "/chat", json={"message": "المسار التجريبي"},
+            auth=("demo", "synthetic-password-123"),
+        )
+    assert response.status_code == 200
+    assert response.json()["reply"].startswith("رد من النموذج الوهمي [TEST1]")
+    assert "https://example.invalid/fictional" in response.json()["reply"]
+    assert factories == ["synthetic-key"]
+    assert len(interactions.calls) == 1
