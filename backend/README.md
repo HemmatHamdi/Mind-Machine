@@ -28,7 +28,10 @@ needed. The public request/response shape remains `message` → `reply`.
   failing second-year General Secondary. No images or full article text are copied.
 
 - Decree 213/2025: the Youm7 transcription was reviewed for the general
-  optional/free/three-year system summary. The original file still requests a copy.
+  optional/free/three-year system and first-year subject list. The original file
+  still requests a copy. Ministry pages from 2025 and 2026 appear to corroborate
+  the first-year list in search indexing, but direct fetch returned 403; they are
+  labeled cross-checks, not the enabled source text.
 - Decree 150/2026, Gazette issue 228 of 15 October 2026: the team's eight-page
   LawHub-branded scan (Gazette pages 14–21) was visually reviewed and the subject
   rules cross-checked against EGyin. Five summaries cover grade-two choices across

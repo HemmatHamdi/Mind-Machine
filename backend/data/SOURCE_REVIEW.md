@@ -1,6 +1,6 @@
 # Source review — 22 November 2026
 
-The corpus contains **14 reviewed summaries**, not full documents, a web crawler,
+The corpus contains **15 reviewed summaries**, not full documents, a web crawler,
 or a guarantee that every current regulation is covered. No model call was made
 to ingest these sources. All source URLs, publication dates, review dates and
 provenance notices are stored in `knowledge.json`.
@@ -34,8 +34,15 @@ automatic application of these rules to every individual case is inferred.
 ## Other supplied URLs
 
 - **Youm7, 12 September 2025:** reviewed transcription of decree 213/2025.
-  Only Article 1's optional/free/three-year framework is enabled as
-  `DEG213_SYSTEM`, labeled `reviewed_report`; it is not an original Gazette PDF.
+  `DEG213_SYSTEM` summarizes Article 1's optional/free/three-year framework;
+  `DEG213_G1_SUBJECTS` records the six subjects added to the first-year total,
+  three subjects outside that total, and the religion passing condition.
+  Both are labeled `reviewed_report`; the article is not an original Gazette PDF.
+- **Ministry, 17 September 2025 and 1 September 2026:** search indexing of the
+  official pages shows the same six first-year core subjects and says the subject
+  map is unchanged in 2026, including Integrated Science. Direct page fetches
+  returned 403, so these links are cross-checks only; the enabled list is based
+  on Youm7's full transcription, not on search snippets.
 - **Cairo Governorate, 3 August 2026:** reviewed English article explicitly
   attributes its university admission overview to **Al-Ahram Gate**.
   `CAIRO_UNIVERSITY_ADMISSIONS` preserves that attribution. The 90% figure is an

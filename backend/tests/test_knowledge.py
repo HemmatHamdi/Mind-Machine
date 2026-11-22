@@ -81,7 +81,7 @@ def test_missing_unretrieved_citations_or_model_links_are_rejected(reply):
 
 def test_shipped_corpus_distinguishes_reports_copy_and_pending_sources():
     kb = KnowledgeBase.load()
-    assert len(kb.passages) == 14
+    assert len(kb.passages) == 15
     assert {p["source_id"] for p in kb.passages} == {
         "maspero_faq_2026_11_12", "gazette_228_2026", "decree_213_2025",
         "cairo_admissions_2026_08_03",
@@ -130,6 +130,7 @@ ENGINEERING_QUESTION = (
     ("مواد التخصص في الصف الثالث ومسارات البكالوريا", "DEG150_G3_PATHS"),
     ("تغيير مسار البكالوريا عند الوصول إلى الصف الثالث", "DEG150_PATH_SWITCH"),
     ("الطبيعة الاختيارية والمجانية ومدة نظام البكالوريا", "DEG213_SYSTEM"),
+    ("قولي مواد سنة أولى بكالوريا", "DEG213_G1_SUBJECTS"),
     ("القبول الجامعي لحاملي البكالوريا وفق التنسيق والمجموع", "CAIRO_UNIVERSITY_ADMISSIONS"),
 ])
 def test_new_source_topics_are_retrieved(question, passage_id):
@@ -264,6 +265,45 @@ def test_authenticated_counselor_questions_use_local_guidance(monkeypatch):
     assert "الرسم وبناء المجسمات" in response.json()["reply"]
     assert "[FAQ_GUIDANCE]" in response.json()["reply"]
     assert "https://www.maspero.eg/" in response.json()["reply"]
+
+
+def test_authenticated_first_year_subject_question_uses_reviewed_list(monkeypatch):
+    from types import SimpleNamespace
+    from approved_main import build_app
+
+    monkeypatch.setenv("GEMINI_EXECUTION_APPROVED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("CHAT_AUTH_USERS", json.dumps({
+        "demo": hash_password("synthetic-password-only"),
+    }))
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(output_text=(
+            "المواد المضافة: العربية، اللغة الأجنبية الأولى، التاريخ المصري، "
+            "الرياضيات، العلوم المتكاملة، الفلسفة والمنطق. وغير المضافة: "
+            "التربية الدينية واللغة الأجنبية الثانية والبرمجة والذكاء الاصطناعي. "
+            "[DEG213_G1_SUBJECTS]"
+        ))
+
+    def factory(api_key):
+        return SimpleNamespace(interactions=SimpleNamespace(create=create))
+
+    with TestClient(build_app(client_factory=factory)) as client:
+        response = client.post(
+            "/chat", json={"message": "قولي مواد سنة أولى بكالوريا"},
+            auth=("demo", "synthetic-password-only"),
+        )
+    assert response.status_code == 200
+    reply = response.json()["reply"]
+    assert "العلوم المتكاملة" in reply
+    assert "https://www.youm7.com/" in reply
+    assert "https://moe.gov.eg/" in reply
+    assert len(calls) == 1
+    evidence = json.loads(calls[0]["input"])["evidence"]
+    assert evidence[0]["id"] == "DEG213_G1_SUBJECTS"
+    assert "70%" in evidence[0]["text"]
 
 
 def test_authenticated_report_question_sends_evidence_to_fake_model(monkeypatch):
