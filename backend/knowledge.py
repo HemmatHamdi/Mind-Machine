@@ -37,7 +37,7 @@ class KnowledgeBase:
             for passage in data["passages"]
             if passage.get("verified") is True
             and data["sources"][passage["source_id"]]["status"]
-            in {"verified", "reviewed_report"}
+            in {"verified", "reviewed_report", "reviewed_copy"}
         ]
         self.documents = [
             Counter(tokens(passage["title"] + " " + passage["text"]))
@@ -82,17 +82,25 @@ def cited_reply(reply: str, passages: list[dict]) -> str:
         r"https?://|www\.", reply, flags=re.IGNORECASE
     ):
         return NO_EVIDENCE_REPLY
-    references = [
-        f"[{passage['id']}] {passage['title']} — {passage['source']['title']}\n"
-        f"{passage['source']['url']}\n"
-        f"آخر مراجعة للمقطع: {passage['checked_on']}"
-        for passage in passages if passage["id"] in citations
-    ]
+    references = []
+    for passage in passages:
+        if passage["id"] not in citations:
+            continue
+        source = passage["source"]
+        references.append(
+            f"[{passage['id']}] {passage['title']} — {source['title']}\n"
+            f"{source['url']}\nآخر مراجعة للمقطع: {passage['checked_on']}"
+        )
+        references.extend(
+            f"رابط للمراجعة: {item['title']}\n{item['url']}"
+            for item in source.get("additional_sources", [])
+        )
+    references = list(dict.fromkeys(references))
     notices = list(dict.fromkeys(
         passage["source"]["notice"]
         for passage in passages
         if passage["id"] in citations
-        and passage["source"]["status"] == "reviewed_report"
+        and passage["source"].get("notice")
     ))
     prefix = "\n".join(notices) + "\n\n" if notices else ""
     return prefix + reply + "\n\nالمصادر:\n" + "\n\n".join(references)

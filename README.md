@@ -8,19 +8,17 @@ prototype**, not a complete educational adviser or a deployed production service
 
 - FastAPI `POST /chat`: `{"message":"..."}` → `{"reply":"..."}`.
 - HTTP Basic authentication and single-process per-user rate limiting.
-- Local Arabic keyword/BM25 retrieval over **seven reviewed FAQ summaries**.
+- Local Arabic keyword/BM25 retrieval over a small reviewed knowledge base:
+  the 2026 pathway rules plus seven FAQ summaries.
 - Gemini **3.5 Flash-Lite** (`gemini-3.5-flash-lite`) receives the question and
   matching evidence, with a 512-token output cap and no automatic retry/fallback.
 - Replies require retrieved source IDs; the backend adds source links, review
   dates and a visible attribution notice.
 - Missing evidence returns an Arabic referral without calling the model.
 
-The active source is a Maspero / National Media Authority report dated
-12 November 2026, attributing its FAQs to the Ministry of Education. This is a
-reviewed media report, **not a reviewed original Ministry decree**. Topics cover
-financial culture assessment, second-language restrictions, guidance meetings,
-exam Arabization, attendance, projects and transfer after failing second-year
-General Secondary. Original Ministry/Gazette records remain pending and excluded.
+The pathway summaries come from the team's LawHub-branded scan of pages from
+Egyptian Gazette issue 228, decree 150/2026. The issue record is linked in the
+official catalogue and the wording was cross-checked against [EGyin's coverage](https://www.egyin.com/article/153914/%C2%AB%D8%A7%D9%84%D8%AA%D8%B9%D9%84%D9%8A%D9%85%C2%BB-%D8%AA%D8%B5%D8%AF%D8%B1-%D9%82%D8%B1%D8%A7%D8%B1%D9%8B%D8%A7-%D8%AC%D8%AF%D9%8A%D8%AF%D9%8B%D8%A7-%D8%A8%D8%B4%D8%A3%D9%86-%D9%86%D8%B8%D8%A7%D9%85-%D8%A7%D9%84%D8%A8%D9%83%D8%A7%D9%84%D9%88%D8%B1%D9%8A%D8%A7). This is a reviewed copy, not a digital original obtained directly from the Government Press. Other limited content comes from a Youm7 transcription of decree 213/2025, a Cairo Governorate page that attributes its admissions summary to Al-Ahram Gate, and seven Maspero FAQ summaries attributed to the Ministry. Each non-primary source is labeled in the response; the chatbot is not a complete or legally authoritative guide. The Ministry page linked by the team appears to be a 2025 proposal discussion and direct access returned 403, so no current rules were enabled from it.
 
 ## Current request flow
 

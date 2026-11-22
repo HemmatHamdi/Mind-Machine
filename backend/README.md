@@ -4,11 +4,10 @@ FastAPI `POST /chat` keeps HTTP Basic authentication and a per-user, in-process
 rate limit. Its opt-in model adapter can call Google's **Gemini 3.5 Flash-Lite**
 (`gemini-3.5-flash-lite`) at most once per request, after local evidence retrieval.
 
-**Current status: seven reviewed FAQ summaries from a Maspero report are enabled.**
-Maspero is the National Media Authority website; its 12 November 2026 article
-attributes these FAQs to the Ministry of Education. This is a Ministry-attributed
-government-media report, **not a reviewed original decree**. It is a narrow demo
-corpus, not a complete or legally authoritative guide. Do not use real student data.
+**Current status: reviewed pathway rules and limited reports are enabled.**
+The knowledge base contains short team-written summaries, not model-memory answers.
+It is a narrow demo corpus, not a complete or legally authoritative guide.
+Do not use real student data.
 
 ## Grounding and source status
 
@@ -17,7 +16,7 @@ The flow is `/chat` → authentication/rate limit → local Arabic keyword/BM25 
 No vector database, embeddings, new account, network scraper or paid fallback is
 needed. The public request/response shape remains `message` → `reply`.
 
-`data/knowledge.json` contains one reviewed report and three pending source records:
+`data/knowledge.json` records source provenance and review dates:
 
 - [Maspero FAQ report](https://www.maspero.eg/egypt/2026/11/12/1005044/التعليم-تستعرض-الأسئلة-الشائعة-وإجاباتها-حول-نظام-شهادة-البكالوريا-المصرية):
   full text reviewed on 22 November 2026. The publisher's
@@ -27,18 +26,28 @@ needed. The public request/response shape remains `message` → `reply`.
   guidance meetings, exam Arabization, attendance, projects and transfer after
   failing second-year General Secondary. No images or full article text are copied.
 
-- Decree 213/2025: the Gazette catalogue identifies the decree, but the PDF link
-  requests a copy. The legal text has not been reviewed.
-- Gazette issue 228 of 15 October 2026: a candidate for decree 150/2026, not verified
-  as its full text.
+- Decree 213/2025: the Youm7 transcription was reviewed for the general
+  optional/free/three-year system summary. The original file still requests a copy.
+- Decree 150/2026, Gazette issue 228 of 15 October 2026: the team's eight-page
+  LawHub-branded scan (Gazette pages 14–21) was visually reviewed and the subject
+  rules cross-checked against EGyin. Five summaries cover grade-two choices across
+  the four tracks, Engineering/Computer Science subject counts, financial culture/
+  sports, grade-three specializations, and pathway changes. The catalogue confirms
+  issue metadata only. This is
+  `reviewed_copy`, not a digital original obtained directly from the Government Press.
+- Cairo Governorate, 3 August 2026: one general university-coordination summary;
+  the page explicitly cites Al-Ahram Gate. It is not a current admissions cutoff.
+- The team's Ministry `baccalau` link is indexed as a January 2025 proposal
+  discussion. Direct access returned 403. No current rules were enabled from it.
 - Ministry statement of 17 August 2026: direct fetch and browser returned 403.
 
-The report has `status: reviewed_report`, not `verified`. A passage's `verified:
-true` means its summary was checked against its named source, not against an
-unavailable decree. Every answer citing the report gets a backend-added notice
-identifying the publisher, publication date and original-decree limitation.
-This notice is also sent with the evidence to the model. The pending decrees
-remain excluded. No facts from LawHub, AI memory or search snippets are enabled.
+Reports have `status: reviewed_report`; the scan has `reviewed_copy`. A passage's
+`verified: true` means its summary was checked against its named source, not that
+the publisher or document copy has been independently authenticated. Every answer
+using these sources gets a backend-added provenance notice. The same notice goes
+to the model. The later decree is used for grade-two/three subject rules; no
+conflicting older subject list is enabled. Pending sources and search snippets
+remain excluded. See `data/SOURCE_REVIEW.md` for articles/pages and limitations.
 
 To add evidence, first obtain a public Ministry/Gazette document and review its
 relevant text and date. Set its source `status` to `verified` only after this
@@ -112,8 +121,8 @@ uvicorn approved_main:app --host 0.0.0.0 --port 8000
 
 The adapter makes at most one model request, without retry or paid fallback.
 No request is made at startup or when no evidence is found. Questions outside the
-seven FAQs (for example, all pathway names, subject counts, fees or admissions)
-should return the handover rather than model-memory answers.
+reviewed passages (for example, university program cutoffs or retake fees) should
+return the handover rather than model-memory answers.
 
 ## Test the API
 
@@ -155,7 +164,7 @@ python -m pytest tests -q
 Tests use fake Gemini responses and blocked outbound networking. They verify
 request wiring only; they do not prove the real API key, model access, free-tier
 status, quota, or a live grounded response. Retrieval tests use the reviewed
-report corpus and fictional fixtures under `example.invalid`; fictional fixtures
+corpus and fictional fixtures under `example.invalid`; fictional fixtures
 are not shipped as real data. API wiring tests use fake model output.
 
 Official references:
