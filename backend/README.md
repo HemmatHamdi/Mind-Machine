@@ -11,7 +11,8 @@ Do not use real student data.
 
 ## Grounding and source status
 
-The flow is `/chat` → authentication/rate limit → local Arabic keyword/BM25 search
+The flow is `/chat` → authentication/rate limit → either a local, deterministic
+counselor-question helper (no model call), or Arabic keyword/BM25 search
 → reviewed passages → Gemini → citation-ID check → reply with source links/dates.
 No vector database, embeddings, new account, network scraper or paid fallback is
 needed. The public request/response shape remains `message` → `reply`.
@@ -123,6 +124,9 @@ The adapter makes at most one model request, without retry or paid fallback.
 No request is made at startup or when no evidence is found. Questions outside the
 reviewed passages (for example, university program cutoffs or retake fees) should
 return the handover rather than model-memory answers.
+Requests for short questions to ask a school counselor use a separate deterministic
+template, cite the reviewed FAQ about counselor guidance, and do not call Gemini.
+The helper does not choose a path or claim that an interest fits a particular path.
 
 ## Test the API
 

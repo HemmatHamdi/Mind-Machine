@@ -176,6 +176,35 @@ def test_no_evidence_means_no_provider_client():
     assert asyncio.run(adapter.generate("ما هي شروط كلية الطب؟")) == NO_EVIDENCE_REPLY
 
 
+def test_counselor_questions_are_personalized_without_model_call():
+    question = (
+        "أنا في تالتة إعدادي وداخل أولى ثانوي وبحب الرسم وبناء المجسمات. "
+        "اديني ٣ أسئلة قصيرة أسألهم للمرشد عشان أختار بنفسي المسار المناسب."
+    )
+
+    def forbidden(api_key):
+        pytest.fail("Generic counselor prompts must not call Gemini")
+
+    adapter = GeminiAdapter(api_key="synthetic-key", client_factory=forbidden)
+    reply = asyncio.run(adapter.generate(question))
+    assert "الرسم وبناء المجسمات" in reply
+    assert reply.count("\n1.") + reply.count("\n2.") + reply.count("\n3.") == 3
+    assert "مش ترشيح مني لمسار" in reply
+    assert "[FAQ_GUIDANCE]" in reply
+    assert "تقرير ماسبيرو" in reply
+
+
+def test_model_does_not_choose_a_path_for_a_student():
+    def forbidden(api_key):
+        pytest.fail("A path-choice question must not construct a model client")
+
+    adapter = GeminiAdapter(api_key="synthetic-key", client_factory=forbidden)
+    reply = asyncio.run(adapter.generate(
+        "أنا بحب الرسم وبناء المجسمات، أي مسار أختار؟"
+    ))
+    assert reply == NO_EVIDENCE_REPLY
+
+
 def test_authenticated_unsupported_chat_returns_handover_without_network(
     monkeypatch,
 ):
@@ -208,6 +237,33 @@ def test_authenticated_unsupported_chat_returns_handover_without_network(
             "/chat", json={"message": "ما هي مسارات البكالوريا؟"},
             auth=("demo", "synthetic-password-only"),
         ).status_code == 429
+
+
+def test_authenticated_counselor_questions_use_local_guidance(monkeypatch):
+    from approved_main import build_app
+
+    monkeypatch.setenv("GEMINI_EXECUTION_APPROVED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("CHAT_AUTH_USERS", json.dumps({
+        "demo": hash_password("synthetic-password-only"),
+    }))
+
+    def forbidden(api_key):
+        pytest.fail("Counselor question mode must not call Gemini")
+
+    question = (
+        "أنا في تالتة إعدادي وبحب الرسم وبناء المجسمات. "
+        "اديني ٣ أسئلة أسألهم للمرشد عشان أختار المسار بنفسي."
+    )
+    with TestClient(build_app(client_factory=forbidden)) as client:
+        response = client.post(
+            "/chat", json={"message": question},
+            auth=("demo", "synthetic-password-only"),
+        )
+    assert response.status_code == 200
+    assert "الرسم وبناء المجسمات" in response.json()["reply"]
+    assert "[FAQ_GUIDANCE]" in response.json()["reply"]
+    assert "https://www.maspero.eg/" in response.json()["reply"]
 
 
 def test_authenticated_report_question_sends_evidence_to_fake_model(monkeypatch):

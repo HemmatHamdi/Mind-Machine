@@ -5,7 +5,7 @@ import json
 import threading
 from collections.abc import Callable
 
-from knowledge import KnowledgeBase, NO_EVIDENCE_REPLY, cited_reply
+from knowledge import KnowledgeBase, NO_EVIDENCE_REPLY, cited_reply, tokens
 
 MODEL_ID = "gemini-3.5-flash-lite"
 MAX_OUTPUT_TOKENS = 512
@@ -26,6 +26,48 @@ Respect each passage's source_note: a Ministry-attributed media report is not th
 original decree. Preserve exceptions and do not infer deadlines, admissions or
 all-pathway rules from a narrowly scoped FAQ.
 """
+
+
+def counselor_question_reply(message: str, knowledge: KnowledgeBase) -> str | None:
+    words = tokens(message)
+    asks_for_questions = any(
+        word.startswith(("اسال", "اسيل", "اسئل")) for word in words
+    )
+    mentions_counselor = any("مرشد" in word for word in words)
+    mentions_choice = any(
+        word.startswith(("اختار", "اختيار")) or "مسار" in word
+        for word in words
+    )
+    if not (asks_for_questions and mentions_counselor and mentions_choice):
+        return None
+
+    guidance = next(
+        (passage for passage in knowledge.passages if passage["id"] == "FAQ_GUIDANCE"),
+        None,
+    )
+    if guidance is None:
+        return NO_EVIDENCE_REPLY
+
+    has_drawing = any("رسم" in word or "تصميم" in word for word in words)
+    has_models = any("مجسم" in word for word in words)
+    if has_drawing and has_models:
+        interest = "الرسم وبناء المجسمات"
+    elif has_drawing:
+        interest = "الرسم والتصميم"
+    elif has_models:
+        interest = "بناء المجسمات"
+    else:
+        interest = "اهتماماتي"
+
+    reply = (
+        "دي ٣ أسئلة تساعدك تختار بنفسك، مش ترشيح مني لمسار:\n"
+        f"1. إيه المواد أو المشروعات في كل مسار اللي أقدر أستخدم فيها {interest}؟\n"
+        "2. ممكن تديني مثالًا عمليًا من كل مسار عشان أقارن نوع الأنشطة؟\n"
+        "3. إزاي أقارن بين المواد اللي هدرسها واهتماماتي قبل ما أختار؟\n\n"
+        "تقرير ماسبيرو يذكر أن المرشد يساعد طلاب أولى ثانوي على فهم المسارات "
+        "والاختيار [FAQ_GUIDANCE]."
+    )
+    return cited_reply(reply, [guidance])
 
 
 class GeminiUnavailable(Exception):
@@ -92,6 +134,9 @@ class GeminiAdapter:
     async def generate(self, message: str) -> str:
         if not isinstance(message, str) or not message.strip() or len(message) > 4_000:
             raise GeminiUnavailable()
+        guidance_reply = counselor_question_reply(message, self._knowledge)
+        if guidance_reply is not None:
+            return guidance_reply
         passages = self._knowledge.retrieve(message)
         if not passages:
             return NO_EVIDENCE_REPLY

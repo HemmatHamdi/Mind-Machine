@@ -14,6 +14,8 @@ prototype**, not a complete educational adviser or a deployed production service
   matching evidence, with a 512-token output cap and no automatic retry/fallback.
 - Replies require retrieved source IDs; the backend adds source links, review
   dates and a visible attribution notice.
+- A small local helper can suggest neutral questions to ask a school counselor;
+  it does not call Gemini or recommend a path.
 - Missing evidence returns an Arabic referral without calling the model.
 
 The pathway summaries come from the team's LawHub-branded scan of pages from

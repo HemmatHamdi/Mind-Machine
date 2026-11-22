@@ -53,6 +53,15 @@ scope and exceptions are preserved. In particular, the financial-culture FAQ
 describes assessment details, while decree 150 describes the subject's status;
 neither substitutes for the other.
 
+## Neutral counselor-question helper
+
+Requests for questions to discuss with a school counselor use a deterministic
+three-question template and do not call Gemini. The questions may repeat an
+interest stated by the student, but do not recommend a path or claim that any
+track is a good fit. `FAQ_GUIDANCE` is cited only for the report's statement that
+the counselor supports students in understanding paths and choosing; the template
+itself is team-authored conversational scaffolding, not a Ministry rule.
+
 ## Retrieval and testing limitations
 
 The simple Arabic lexical/BM25 matcher can miss paraphrases and can retrieve
