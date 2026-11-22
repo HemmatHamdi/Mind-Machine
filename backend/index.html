@@ -101,7 +101,7 @@
         <label for="password">كلمة المرور</label>
         <input id="password" name="password" type="password" autocomplete="current-password"
           placeholder="الكلمة اللي اخترتها في النموذج الآمن" required>
-        <p class="hint">لو نسيتها، ما تجربش كلمات عشوائية؛ قولي لي وهنعيد ضبطها بأمان.</p>
+        <p class="hint">اكتب بيانات الدخول بلوحة مفاتيح إنجليزية. لو نسيت كلمة المرور، ما تجربش كلمات عشوائية؛ قولي لي وهنعيد ضبطها بأمان.</p>
         <label for="message">سؤالك</label>
         <textarea id="message" name="message" maxlength="4000" required
           placeholder="مثال: متى لقاءات المرشد التعليمي في أولى ثانوي؟"></textarea>
@@ -128,6 +128,10 @@
       const password = form.elements.password.value;
       const message = form.elements.message.value.trim();
       if (!username || !password || !message || button.disabled) return;
+      if (/[^\x00-\x7F]/.test(`${username}:${password}`)) {
+        status.textContent = "بيانات الدخول لازم تكون بحروف إنجليزية. غيّر لغة لوحة المفاتيح واكتب اسم المستخدم وكلمة المرور تاني.";
+        return;
+      }
 
       button.disabled = true;
       status.textContent = "ببعت السؤال للباك إند…";

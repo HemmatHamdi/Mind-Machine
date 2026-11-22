@@ -44,6 +44,9 @@ def test_chat_page_is_served_locally_without_external_assets():
     assert "مَساري" in response.text
     assert 'fetch("/chat"' in response.text
     assert "type=\"password\"" in response.text
+    assert "اكتب بيانات الدخول بلوحة مفاتيح إنجليزية" in response.text
+    assert "بيانات الدخول لازم تكون بحروف إنجليزية" in response.text
+    assert response.text.index("/.test(`${username}:${password}`)") < response.text.index("btoa(")
     assert "gemini" not in response.text.lower()
 
 
