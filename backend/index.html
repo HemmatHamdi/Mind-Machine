@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>مَساري — مساعد البكالوريا المصرية</title>
+  <style>
+    :root {
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      color: #18251f;
+      background: #f4f6f1;
+      font-synthesis: none;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; }
+    main {
+      width: min(100% - 32px, 720px);
+      margin: 48px auto;
+    }
+    header { margin-bottom: 24px; }
+    .eyebrow { color: #547363; font-size: 14px; margin: 0 0 8px; }
+    h1 { font-size: clamp(30px, 7vw, 42px); letter-spacing: -.04em; margin: 0; }
+    .intro { color: #58655e; line-height: 1.8; margin: 10px 0 0; }
+    .card {
+      background: #fff;
+      border: 1px solid #e1e8df;
+      border-radius: 18px;
+      box-shadow: 0 12px 36px #243d2c0b;
+      padding: clamp(20px, 5vw, 32px);
+    }
+    .notice {
+      background: #f2f6ec;
+      border-radius: 12px;
+      color: #495a4d;
+      font-size: 14px;
+      line-height: 1.7;
+      margin-bottom: 24px;
+      padding: 12px 14px;
+    }
+    label { display: block; font-size: 14px; font-weight: 650; margin: 16px 0 7px; }
+    input, textarea {
+      background: #fff;
+      border: 1px solid #d8e0d8;
+      border-radius: 10px;
+      color: inherit;
+      font: inherit;
+      outline: none;
+      padding: 11px 12px;
+      width: 100%;
+    }
+    input:focus, textarea:focus { border-color: #488161; box-shadow: 0 0 0 3px #48816120; }
+    textarea { line-height: 1.7; min-height: 124px; resize: vertical; }
+    .hint { color: #77827b; font-size: 12px; margin: 6px 0 0; }
+    button {
+      background: #205e3e;
+      border: 0;
+      border-radius: 10px;
+      color: #fff;
+      cursor: pointer;
+      font: inherit;
+      font-weight: 700;
+      margin-top: 18px;
+      min-height: 46px;
+      padding: 10px 20px;
+      width: 100%;
+    }
+    button:hover:not(:disabled) { background: #174a30; }
+    button:disabled { cursor: wait; opacity: .65; }
+    #status { color: #58655e; font-size: 14px; min-height: 24px; margin: 14px 0 0; }
+    #answer {
+      background: #f8faf7;
+      border: 1px solid #e4ebe3;
+      border-radius: 12px;
+      line-height: 1.9;
+      margin-top: 10px;
+      overflow-wrap: anywhere;
+      padding: 16px;
+      white-space: pre-wrap;
+    }
+    #answer:empty { display: none; }
+    footer { color: #77827b; font-size: 12px; line-height: 1.7; margin-top: 18px; }
+    @media (max-width: 520px) { main { margin: 28px auto; } }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <p class="eyebrow">مساعد تجريبي لنظام البكالوريا المصرية</p>
+      <h1>مَساري</h1>
+      <p class="intro">اكتب سؤالك، وهنبعته للباك إند عشان يرد من المعلومات المتاحة عندنا.</p>
+    </header>
+    <section class="card" aria-label="إرسال سؤال">
+      <div class="notice">
+        الإجابات الحالية محدودة بسبعة موضوعات من أسئلة نقلها ماسبيرو عن الوزارة.
+        الرد هيذكر مصدره، ولو ملقاش معلومة كفاية هيقولك.
+      </div>
+      <form id="chat-form">
+        <label for="username">اسم المستخدم</label>
+        <input id="username" name="username" autocomplete="username" required>
+        <label for="password">كلمة المرور</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <label for="message">سؤالك</label>
+        <textarea id="message" name="message" maxlength="4000" required
+          placeholder="مثال: متى لقاءات المرشد التعليمي في أولى ثانوي؟"></textarea>
+        <p class="hint">السؤال لا يُرسل إلا لما تضغط على الزر. مفيش حفظ للمحادثة.</p>
+        <button id="send" type="submit">إرسال السؤال</button>
+      </form>
+      <p id="status" role="status" aria-live="polite"></p>
+      <div id="answer" aria-live="polite"></div>
+    </section>
+    <footer>
+      واجهة تجريبية محلية. عند الإرسال، يُرسل السؤال إلى الباك إند ومزوّد النموذج
+      إذا كان التشغيل مفعّلًا. لا تدخل بيانات شخصية.
+    </footer>
+  </main>
+  <script>
+    const form = document.querySelector("#chat-form");
+    const button = document.querySelector("#send");
+    const status = document.querySelector("#status");
+    const answer = document.querySelector("#answer");
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const username = form.elements.username.value.trim();
+      const password = form.elements.password.value;
+      const message = form.elements.message.value.trim();
+      if (!username || !password || !message || button.disabled) return;
+
+      button.disabled = true;
+      status.textContent = "ببعت السؤال للباك إند…";
+      answer.textContent = "";
+      try {
+        const response = await fetch("/chat", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Basic ${btoa(`${username}:${password}`)}`
+          },
+          body: JSON.stringify({ message }),
+          cache: "no-store"
+        });
+        const data = await response.json();
+        if (!response.ok) {
+          const messages = {
+            401: "اسم المستخدم أو كلمة المرور مش صحيحين.",
+            429: "وصلت للحد المؤقت للطلبات. استنى شوية وجرب تاني.",
+            503: "الباك إند أو تشغيل النموذج مش متاح حاليًا."
+          };
+          throw new Error(messages[response.status] || "الطلب ماكملش. راجع إعداد الباك إند.");
+        }
+        answer.textContent = data.reply;
+        status.textContent = "وصل رد من الباك إند.";
+      } catch (error) {
+        status.textContent = error instanceof TypeError
+          ? "مش قادر أوصل للباك إند. تأكد إنه شغال."
+          : error.message;
+      } finally {
+        button.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

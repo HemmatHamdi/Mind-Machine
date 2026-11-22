@@ -57,8 +57,8 @@ uvicorn approved_main:app --host 127.0.0.1 --port 8000 --workers 1
 
 Do not start multiple workers: limits are held in process memory. Starting the
 server does not itself send a model request. `uvicorn main:app` always leaves
-generation disabled. Interactive API documentation is at `/docs`; no current
-integrated chat UI is served.
+generation disabled. Open `/` for the simple Arabic chat page or `/docs` for API
+documentation. The page has no chat-history storage or automatic submission.
 
 After approving a live request, this curl prompts for the demo account password
 without including it in the command:

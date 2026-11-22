@@ -2,12 +2,13 @@
 
 import time
 from collections.abc import Callable
+from pathlib import Path
 from typing import Protocol
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from security import ChatSecurity
@@ -83,6 +84,10 @@ def create_app(
                 ]
             },
         )
+
+    @app.get("/", include_in_schema=False)
+    async def chat_page():
+        return FileResponse(Path(__file__).with_name("index.html"))
 
     # Preserve route-level defense in depth and HTTP Basic documentation.
     # Request state prevents a second password check or quota reservation.

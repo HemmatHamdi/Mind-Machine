@@ -117,6 +117,12 @@ should return the handover rather than model-memory answers.
 
 ## Test the API
 
+Open `http://localhost:8000/` for the minimal Arabic browser interface. Enter an
+HTTP Basic username/password created with `create_chat_user.py`, type a question
+and press **إرسال السؤال**. The page sends one `POST /chat` only on button press;
+it does not save chat history or automatically retry. Its password is not saved
+by the app. With model execution disabled, the backend returns `503`.
+
 ```bash
 curl -s -u demo:YOUR_PASSWORD \
   -H 'Content-Type: application/json' \
