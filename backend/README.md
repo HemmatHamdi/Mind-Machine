@@ -27,20 +27,23 @@ needed. The public request/response shape remains `message` → `reply`.
   guidance meetings, exam Arabization, attendance, projects and transfer after
   failing second-year General Secondary. No images or full article text are copied.
 
-- Decree 213/2025: the Youm7 transcription was reviewed for the general
-  optional/free/three-year system and first-year subject list. The original file
-  still requests a copy. Ministry pages from 2025 and 2026 appear to corroborate
-  the first-year list in search indexing, but direct fetch returned 403; they are
-  labeled cross-checks, not the enabled source text.
+- Decree 213/2025: the Youm7 transcription was reviewed for the optional/free/
+  three-year system, first-year subject list, and learning model. The original
+  file still requests a copy. Ministry pages from 2025 and 2026 appear to
+  corroborate the first-year list in search indexing, but direct fetch returned
+  403; they are labeled cross-checks, not the enabled source text.
 - Decree 150/2026, Gazette issue 228 of 15 October 2026: the team's eight-page
   LawHub-branded scan (Gazette pages 14–21) was visually reviewed and the subject
-  rules cross-checked against EGyin. Five summaries cover grade-two choices across
-  the four tracks, Engineering/Computer Science subject counts, financial culture/
-  sports, grade-three specializations, and pathway changes. The catalogue confirms
-  issue metadata only. This is
+  rules cross-checked against EGyin. Twelve summaries cover admission conditions,
+  grade-two/three subjects and activities, pathway changes, exam opportunities,
+  scores, first-chance assessment requirements, disability arrangements,
+  excused absences and effective date. The catalogue confirms issue metadata
+  only. This is
   `reviewed_copy`, not a digital original obtained directly from the Government Press.
-- Cairo Governorate, 3 August 2026: one general university-coordination summary;
-  the page explicitly cites Al-Ahram Gate. It is not a current admissions cutoff.
+- Cairo Governorate, 3 August 2026: two summaries cover score-based coordination,
+  the certificate's stated status and the reported IB cooperation. The page
+  explicitly cites Al-Ahram Gate and is not a current admissions cutoff or proof
+  of automatic admission abroad.
 - The team's Ministry `baccalau` link is indexed as a January 2025 proposal
   discussion. Direct access returned 403. No current rules were enabled from it.
 - Ministry statement of 17 August 2026: direct fetch and browser returned 403.

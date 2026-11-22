@@ -81,7 +81,7 @@ def test_missing_unretrieved_citations_or_model_links_are_rejected(reply):
 
 def test_shipped_corpus_distinguishes_reports_copy_and_pending_sources():
     kb = KnowledgeBase.load()
-    assert len(kb.passages) == 15
+    assert len(kb.passages) == 24
     assert {p["source_id"] for p in kb.passages} == {
         "maspero_faq_2026_11_12", "gazette_228_2026", "decree_213_2025",
         "cairo_admissions_2026_08_03",
@@ -130,8 +130,17 @@ ENGINEERING_QUESTION = (
     ("مواد التخصص في الصف الثالث ومسارات البكالوريا", "DEG150_G3_PATHS"),
     ("تغيير مسار البكالوريا عند الوصول إلى الصف الثالث", "DEG150_PATH_SWITCH"),
     ("الطبيعة الاختيارية والمجانية ومدة نظام البكالوريا", "DEG213_SYSTEM"),
+    ("شروط قيد أولى بكالوريا وحملة IGCSE", "DEG150_ENROLLMENT"),
+    ("امتحان البكالوريا الفرصة الأولى والثانية ورسوم الإعادة", "DEG150_EXAM_OPPORTUNITIES"),
+    ("مجموع البكالوريا ست مواد ومائة درجة 600", "DEG150_FINAL_SCORE"),
+    ("شرط 60% من التقييمات لدخول امتحان الفرصة الأولى", "DEG150_FIRST_CHANCE"),
+    ("مسارات البكالوريا للطلاب المكفوفين وفئات الدمج", "DEG150_INCLUSION"),
+    ("غياب بسبب مرض عن امتحان الفرصة الأولى بعذر قهري", "DEG150_FORCE_MAJEURE"),
+    ("متى يبدأ تطبيق قرار 150 لسنة 2026", "DEG150_EFFECTIVE"),
+    ("هدف البكالوريا التفكير النقدي والتعلم متعدد التخصصات", "DEG213_LEARNING_MODEL"),
     ("قولي مواد سنة أولى بكالوريا", "DEG213_G1_SUBJECTS"),
     ("القبول الجامعي لحاملي البكالوريا وفق التنسيق والمجموع", "CAIRO_UNIVERSITY_ADMISSIONS"),
+    ("هل شهادة البكالوريا معترف بها بالخارج والتعاون مع IB", "CAIRO_CERTIFICATE_IB"),
 ])
 def test_new_source_topics_are_retrieved(question, passage_id):
     assert KnowledgeBase.load().retrieve(question)[0]["id"] == passage_id
@@ -149,11 +158,16 @@ def test_scanned_copy_answer_discloses_provenance_and_corroboration():
     assert "اليوم السابع" not in reply
 
 
-@pytest.mark.parametrize("question", [
-    "رسوم الإعادة", "درجات قبول جامعة القاهرة 2027", "سعر البيتكوين اليوم",
-])
-def test_new_sources_do_not_invent_missing_fees_or_cutoffs(question):
-    assert KnowledgeBase.load().retrieve(question) == []
+def test_exam_fee_and_admission_cutoff_answers_keep_their_scope():
+    kb = KnowledgeBase.load()
+    fee = kb.retrieve("رسوم إعادة امتحان البكالوريا للفرصة الثانية")[0]
+    assert fee["id"] == "DEG150_EXAM_OPPORTUNITIES"
+    assert "100 جنيه" in fee["text"]
+    assert "لم نعممها على كل محاولة" in fee["text"]
+    cutoff = kb.retrieve("درجات قبول جامعة القاهرة 2027")[0]
+    assert cutoff["id"] == "CAIRO_UNIVERSITY_ADMISSIONS"
+    assert "لا تقدم حدود قبول فعلية" in cutoff["text"]
+    assert kb.retrieve("سعر البيتكوين اليوم") == []
 
 
 def test_reviewed_report_always_has_a_visible_attribution():
@@ -304,6 +318,41 @@ def test_authenticated_first_year_subject_question_uses_reviewed_list(monkeypatc
     evidence = json.loads(calls[0]["input"])["evidence"]
     assert evidence[0]["id"] == "DEG213_G1_SUBJECTS"
     assert "70%" in evidence[0]["text"]
+
+
+def test_authenticated_first_chance_question_uses_assessment_weights(monkeypatch):
+    from types import SimpleNamespace
+    from approved_main import build_app
+
+    monkeypatch.setenv("GEMINI_EXECUTION_APPROVED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("CHAT_AUTH_USERS", json.dumps({
+        "demo": hash_password("synthetic-password-only"),
+    }))
+    requests = []
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(output_text=(
+            "يلزم إنجاز 60% من التقييمات في كل مادة من 2026/2027. "
+            "التقييم الأسبوعي 20% والمشروع 15%. [DEG150_FIRST_CHANCE]"
+        ))
+
+    def factory(api_key):
+        return SimpleNamespace(interactions=SimpleNamespace(create=create))
+
+    with TestClient(build_app(client_factory=factory)) as client:
+        response = client.post(
+            "/chat",
+            json={"message": "هل لازم أجيب 60% من التقييمات عشان أدخل الفرصة الأولى؟"},
+            auth=("demo", "synthetic-password-only"),
+        )
+    assert response.status_code == 200
+    assert "2026/2027" in response.json()["reply"]
+    assert "https://www.egyin.com/" in response.json()["reply"]
+    evidence = json.loads(requests[0]["input"])["evidence"]
+    assert evidence[0]["id"] == "DEG150_FIRST_CHANCE"
+    assert "التقييم الشهري الأول 20%" in evidence[0]["text"]
 
 
 def test_authenticated_report_question_sends_evidence_to_fake_model(monkeypatch):
