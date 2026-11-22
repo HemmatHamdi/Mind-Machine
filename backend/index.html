@@ -97,9 +97,11 @@
       </div>
       <form id="chat-form">
         <label for="username">اسم المستخدم</label>
-        <input id="username" name="username" autocomplete="username" required>
+        <input id="username" name="username" value="demo" autocomplete="username" required>
         <label for="password">كلمة المرور</label>
-        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <input id="password" name="password" type="password" autocomplete="current-password"
+          placeholder="الكلمة اللي اخترتيها في النموذج الآمن" required>
+        <p class="hint">لو نسيتيها، ما تجربيش كلمات عشوائية؛ قولي لي وهنعيد ضبطها بأمان.</p>
         <label for="message">سؤالك</label>
         <textarea id="message" name="message" maxlength="4000" required
           placeholder="مثال: متى لقاءات المرشد التعليمي في أولى ثانوي؟"></textarea>
