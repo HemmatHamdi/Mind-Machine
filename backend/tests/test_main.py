@@ -37,6 +37,19 @@ def authenticated_client():
     return client
 
 
+def test_chat_page_is_served_locally_without_external_assets():
+    response = TestClient(create_app()).get("/")
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/html")
+    assert "مَساري" in response.text
+    assert 'fetch("/chat"' in response.text
+    assert "type=\"password\"" in response.text
+    assert "اكتب بيانات الدخول بلوحة مفاتيح إنجليزية" in response.text
+    assert "بيانات الدخول لازم تكون بحروف إنجليزية" in response.text
+    assert response.text.index("/.test(`${username}:${password}`)") < response.text.index("btoa(")
+    assert "gemini" not in response.text.lower()
+
+
 @pytest.mark.parametrize("message", ["Hello", "  Hello  ", "اشرح معنى API", "x" * 4000])
 def test_valid_chat_is_explicitly_unavailable_without_any_provider_key(message, caplog):
     with caplog.at_level(logging.INFO):

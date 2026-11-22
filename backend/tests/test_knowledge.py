@@ -1,4 +1,4 @@
-"""All education claims here are fictional fixtures, not Baccalaureate rules."""
+"""Offline fixtures and regression checks against the reviewed source summaries."""
 
 import asyncio
 import copy
@@ -8,7 +8,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gemini_adapter import GeminiAdapter
-from knowledge import KnowledgeBase, NO_EVIDENCE_REPLY, cited_reply, tokens
+from knowledge import KNOWLEDGE_PATH, KnowledgeBase, NO_EVIDENCE_REPLY, cited_reply, tokens
 from security import hash_password
 
 
@@ -79,14 +79,18 @@ def test_missing_unretrieved_citations_or_model_links_are_rejected(reply):
     assert cited_reply(reply, passages) == NO_EVIDENCE_REPLY
 
 
-def test_shipped_corpus_distinguishes_report_from_pending_decrees():
+def test_shipped_corpus_distinguishes_reports_copy_and_pending_sources():
     kb = KnowledgeBase.load()
-    assert len(kb.passages) == 7
-    assert {p["source_id"] for p in kb.passages} == {"maspero_faq_2026_11_12"}
+    assert len(kb.passages) == 24
+    assert {p["source_id"] for p in kb.passages} == {
+        "maspero_faq_2026_11_12", "gazette_228_2026", "decree_213_2025",
+        "cairo_admissions_2026_08_03",
+    }
     for passage in kb.passages:
-        assert passage["source"]["status"] == "reviewed_report"
-        assert "وليس نص القرار الأصلي" in passage["source"]["notice"]
-    assert kb.retrieve("ما هي مسارات البكالوريا المصرية؟") == []
+        assert passage["source"]["status"] in {"reviewed_report", "reviewed_copy"}
+        assert passage["source"]["notice"]
+        assert passage["source"]["checked_on"] == "2026-11-22"
+    assert not any(p["source_id"].startswith("ministry") for p in kb.passages)
 
 
 @pytest.mark.parametrize(("question", "passage_id"), [
@@ -107,7 +111,63 @@ def test_report_faq_topics_are_retrieved(question, passage_id):
     "ما هي كليات مسار الأعمال؟", "هل الطب أفضل من الهندسة؟",
 ])
 def test_report_does_not_cover_all_rules_or_admissions(question):
-    assert KnowledgeBase.load().retrieve(question) == []
+    data = json.loads(KNOWLEDGE_PATH.read_text(encoding="utf-8"))
+    data["passages"] = [
+        p for p in data["passages"] if p["source_id"] == "maspero_faq_2026_11_12"
+    ]
+    assert KnowledgeBase(data).retrieve(question) == []
+
+
+ENGINEERING_QUESTION = (
+    "أنا في تانية ثانوي في مسار الهندسة وعلوم الحاسب. "
+    "إيه اختياراتي في مادة التخصص؟ وبختار كام مادة؟"
+)
+
+
+@pytest.mark.parametrize(("question", "passage_id"), [
+    (ENGINEERING_QUESTION, "DEG150_G2_PATHS"),
+    ("اختيار مادة تخصص مسار الطب وعلوم الحياة", "DEG150_G2_ALL_TRACKS"),
+    ("مواد التخصص في الصف الثالث ومسارات البكالوريا", "DEG150_G3_PATHS"),
+    ("تغيير مسار البكالوريا عند الوصول إلى الصف الثالث", "DEG150_PATH_SWITCH"),
+    ("الطبيعة الاختيارية والمجانية ومدة نظام البكالوريا", "DEG213_SYSTEM"),
+    ("شروط قيد أولى بكالوريا وحملة IGCSE", "DEG150_ENROLLMENT"),
+    ("امتحان البكالوريا الفرصة الأولى والثانية ورسوم الإعادة", "DEG150_EXAM_OPPORTUNITIES"),
+    ("مجموع البكالوريا ست مواد ومائة درجة 600", "DEG150_FINAL_SCORE"),
+    ("شرط 60% من التقييمات لدخول امتحان الفرصة الأولى", "DEG150_FIRST_CHANCE"),
+    ("مسارات البكالوريا للطلاب المكفوفين وفئات الدمج", "DEG150_INCLUSION"),
+    ("غياب بسبب مرض عن امتحان الفرصة الأولى بعذر قهري", "DEG150_FORCE_MAJEURE"),
+    ("متى يبدأ تطبيق قرار 150 لسنة 2026", "DEG150_EFFECTIVE"),
+    ("هدف البكالوريا التفكير النقدي والتعلم متعدد التخصصات", "DEG213_LEARNING_MODEL"),
+    ("قولي مواد سنة أولى بكالوريا", "DEG213_G1_SUBJECTS"),
+    ("القبول الجامعي لحاملي البكالوريا وفق التنسيق والمجموع", "CAIRO_UNIVERSITY_ADMISSIONS"),
+    ("هل شهادة البكالوريا معترف بها بالخارج والتعاون مع IB", "CAIRO_CERTIFICATE_IB"),
+])
+def test_new_source_topics_are_retrieved(question, passage_id):
+    assert KnowledgeBase.load().retrieve(question)[0]["id"] == passage_id
+
+
+def test_scanned_copy_answer_discloses_provenance_and_corroboration():
+    passages = KnowledgeBase.load().retrieve(ENGINEERING_QUESTION)
+    assert "مادة تخصصية واحدة" in passages[0]["text"]
+    assert "الكيمياء أو البرمجة والذكاء الاصطناعي" in passages[0]["text"]
+    reply = cited_reply("إجابة تجريبية [DEG150_G2_PATHS]", passages)
+    assert "LawHub" in reply
+    assert "لم نراجع نسخة رقمية مباشرة" in reply
+    assert "https://dspace.id.com.eg/" in reply
+    assert "https://www.egyin.com/" in reply
+    assert "اليوم السابع" not in reply
+
+
+def test_exam_fee_and_admission_cutoff_answers_keep_their_scope():
+    kb = KnowledgeBase.load()
+    fee = kb.retrieve("رسوم إعادة امتحان البكالوريا للفرصة الثانية")[0]
+    assert fee["id"] == "DEG150_EXAM_OPPORTUNITIES"
+    assert "100 جنيه" in fee["text"]
+    assert "لم نعممها على كل محاولة" in fee["text"]
+    cutoff = kb.retrieve("درجات قبول جامعة القاهرة 2027")[0]
+    assert cutoff["id"] == "CAIRO_UNIVERSITY_ADMISSIONS"
+    assert "لا تقدم حدود قبول فعلية" in cutoff["text"]
+    assert kb.retrieve("سعر البيتكوين اليوم") == []
 
 
 def test_reviewed_report_always_has_a_visible_attribution():
@@ -129,6 +189,35 @@ def test_no_evidence_means_no_provider_client():
         knowledge=KnowledgeBase(fixture_data()),
     )
     assert asyncio.run(adapter.generate("ما هي شروط كلية الطب؟")) == NO_EVIDENCE_REPLY
+
+
+def test_counselor_questions_are_personalized_without_model_call():
+    question = (
+        "أنا في تالتة إعدادي وداخل أولى ثانوي وبحب الرسم وبناء المجسمات. "
+        "اديني ٣ أسئلة قصيرة أسألهم للمرشد عشان أختار بنفسي المسار المناسب."
+    )
+
+    def forbidden(api_key):
+        pytest.fail("Generic counselor prompts must not call Gemini")
+
+    adapter = GeminiAdapter(api_key="synthetic-key", client_factory=forbidden)
+    reply = asyncio.run(adapter.generate(question))
+    assert "الرسم وبناء المجسمات" in reply
+    assert reply.count("\n1.") + reply.count("\n2.") + reply.count("\n3.") == 3
+    assert "مش ترشيح مني لمسار" in reply
+    assert "[FAQ_GUIDANCE]" in reply
+    assert "تقرير ماسبيرو" in reply
+
+
+def test_model_does_not_choose_a_path_for_a_student():
+    def forbidden(api_key):
+        pytest.fail("A path-choice question must not construct a model client")
+
+    adapter = GeminiAdapter(api_key="synthetic-key", client_factory=forbidden)
+    reply = asyncio.run(adapter.generate(
+        "أنا بحب الرسم وبناء المجسمات، أي مسار أختار؟"
+    ))
+    assert reply == NO_EVIDENCE_REPLY
 
 
 def test_authenticated_unsupported_chat_returns_handover_without_network(
@@ -165,6 +254,107 @@ def test_authenticated_unsupported_chat_returns_handover_without_network(
         ).status_code == 429
 
 
+def test_authenticated_counselor_questions_use_local_guidance(monkeypatch):
+    from approved_main import build_app
+
+    monkeypatch.setenv("GEMINI_EXECUTION_APPROVED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("CHAT_AUTH_USERS", json.dumps({
+        "demo": hash_password("synthetic-password-only"),
+    }))
+
+    def forbidden(api_key):
+        pytest.fail("Counselor question mode must not call Gemini")
+
+    question = (
+        "أنا في تالتة إعدادي وبحب الرسم وبناء المجسمات. "
+        "اديني ٣ أسئلة أسألهم للمرشد عشان أختار المسار بنفسي."
+    )
+    with TestClient(build_app(client_factory=forbidden)) as client:
+        response = client.post(
+            "/chat", json={"message": question},
+            auth=("demo", "synthetic-password-only"),
+        )
+    assert response.status_code == 200
+    assert "الرسم وبناء المجسمات" in response.json()["reply"]
+    assert "[FAQ_GUIDANCE]" in response.json()["reply"]
+    assert "https://www.maspero.eg/" in response.json()["reply"]
+
+
+def test_authenticated_first_year_subject_question_uses_reviewed_list(monkeypatch):
+    from types import SimpleNamespace
+    from approved_main import build_app
+
+    monkeypatch.setenv("GEMINI_EXECUTION_APPROVED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("CHAT_AUTH_USERS", json.dumps({
+        "demo": hash_password("synthetic-password-only"),
+    }))
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(output_text=(
+            "المواد المضافة: العربية، اللغة الأجنبية الأولى، التاريخ المصري، "
+            "الرياضيات، العلوم المتكاملة، الفلسفة والمنطق. وغير المضافة: "
+            "التربية الدينية واللغة الأجنبية الثانية والبرمجة والذكاء الاصطناعي. "
+            "[DEG213_G1_SUBJECTS]"
+        ))
+
+    def factory(api_key):
+        return SimpleNamespace(interactions=SimpleNamespace(create=create))
+
+    with TestClient(build_app(client_factory=factory)) as client:
+        response = client.post(
+            "/chat", json={"message": "قولي مواد سنة أولى بكالوريا"},
+            auth=("demo", "synthetic-password-only"),
+        )
+    assert response.status_code == 200
+    reply = response.json()["reply"]
+    assert "العلوم المتكاملة" in reply
+    assert "https://www.youm7.com/" in reply
+    assert "https://moe.gov.eg/" in reply
+    assert len(calls) == 1
+    evidence = json.loads(calls[0]["input"])["evidence"]
+    assert evidence[0]["id"] == "DEG213_G1_SUBJECTS"
+    assert "70%" in evidence[0]["text"]
+
+
+def test_authenticated_first_chance_question_uses_assessment_weights(monkeypatch):
+    from types import SimpleNamespace
+    from approved_main import build_app
+
+    monkeypatch.setenv("GEMINI_EXECUTION_APPROVED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("CHAT_AUTH_USERS", json.dumps({
+        "demo": hash_password("synthetic-password-only"),
+    }))
+    requests = []
+
+    def create(**kwargs):
+        requests.append(kwargs)
+        return SimpleNamespace(output_text=(
+            "يلزم إنجاز 60% من التقييمات في كل مادة من 2026/2027. "
+            "التقييم الأسبوعي 20% والمشروع 15%. [DEG150_FIRST_CHANCE]"
+        ))
+
+    def factory(api_key):
+        return SimpleNamespace(interactions=SimpleNamespace(create=create))
+
+    with TestClient(build_app(client_factory=factory)) as client:
+        response = client.post(
+            "/chat",
+            json={"message": "هل لازم أجيب 60% من التقييمات عشان أدخل الفرصة الأولى؟"},
+            auth=("demo", "synthetic-password-only"),
+        )
+    assert response.status_code == 200
+    assert "2026/2027" in response.json()["reply"]
+    assert "https://www.egyin.com/" in response.json()["reply"]
+    evidence = json.loads(requests[0]["input"])["evidence"]
+    assert evidence[0]["id"] == "DEG150_FIRST_CHANCE"
+    assert "التقييم الشهري الأول 20%" in evidence[0]["text"]
+
+
 def test_authenticated_report_question_sends_evidence_to_fake_model(monkeypatch):
     from types import SimpleNamespace
     from approved_main import build_app
@@ -195,3 +385,39 @@ def test_authenticated_report_question_sends_evidence_to_fake_model(monkeypatch)
     evidence = json.loads(calls[0]["input"])["evidence"]
     assert evidence[0]["id"] == "FAQ_GUIDANCE"
     assert "وليس نص القرار الأصلي" in evidence[0]["source_note"]
+
+
+def test_engineering_question_through_authenticated_api_with_fake_model(monkeypatch):
+    from types import SimpleNamespace
+    from approved_main import build_app
+
+    monkeypatch.setenv("GEMINI_EXECUTION_APPROVED", "true")
+    monkeypatch.setenv("GEMINI_API_KEY", "synthetic-key")
+    monkeypatch.setenv("CHAT_AUTH_USERS", json.dumps({
+        "demo": hash_password("synthetic-password-only"),
+    }))
+    calls = []
+
+    def create(**kwargs):
+        calls.append(kwargs)
+        return SimpleNamespace(output_text=(
+            "بتختار مادة واحدة: الكيمياء أو البرمجة والذكاء الاصطناعي. "
+            "[DEG150_G2_PATHS]"
+        ))
+
+    def factory(api_key):
+        return SimpleNamespace(interactions=SimpleNamespace(create=create))
+
+    with TestClient(build_app(client_factory=factory)) as client:
+        response = client.post(
+            "/chat", json={"message": ENGINEERING_QUESTION},
+            auth=("demo", "synthetic-password-only"),
+        )
+    assert response.status_code == 200
+    reply = response.json()["reply"]
+    assert "مادة واحدة" in reply and "LawHub" in reply
+    assert "https://www.egyin.com/" in reply
+    assert len(calls) == 1
+    evidence = json.loads(calls[0]["input"])["evidence"]
+    assert evidence[0]["id"] == "DEG150_G2_PATHS"
+    assert "لم نراجع نسخة رقمية مباشرة" in evidence[0]["source_note"]
