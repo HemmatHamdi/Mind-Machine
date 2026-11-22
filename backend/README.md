@@ -129,8 +129,15 @@ authenticated request returns `{"reply":"..."}`. A matched FAQ can produce a mod
 answer with source IDs, the report attribution, its link and review date. An
 unsupported question returns the fixed source-unavailable message without a model
 request. The curl above is a **live inference** if execution is enabled; do not
-run it until separately approved. This report-grounded flow has only been tested
-with fake model output, not a live Gemini response.
+run it until separately approved.
+
+One separately approved live request at commit `6afd480` returned HTTP 200 through
+the local FastAPI TestClient and from Gemini. The question was
+`متى لقاءات المرشد التعليمي في أولى ثانوي؟`. The answer correctly identified the
+second term, cited `[FAQ_GUIDANCE]`, included the report notice/link, and did not
+invent an administrative deadline. Exactly one outbound request was observed,
+with no retry or fallback. This is local integration evidence, not a deployed
+backend test or a full answer-quality evaluation. No further inference is approved.
 
 ## Offline tests
 

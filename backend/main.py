@@ -1,7 +1,8 @@
-"""Provider-free chat API: retain access controls, disable AI generation."""
+"""Authenticated chat API; generation is disabled unless explicitly injected."""
 
 import time
 from collections.abc import Callable
+from typing import Protocol
 
 from dotenv import load_dotenv
 from fastapi import Depends, FastAPI, HTTPException
@@ -10,7 +11,6 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 
 from security import ChatSecurity
-from zerogpu import ChatGenerator
 
 load_dotenv()
 
@@ -18,6 +18,10 @@ MAX_MESSAGE_LENGTH = 4_000
 AI_UNAVAILABLE_MESSAGE = (
     "AI generation is currently unavailable because no AI service is configured."
 )
+
+
+class ChatGenerator(Protocol):
+    async def generate(self, message: str) -> str: ...
 
 
 class ChatRequest(BaseModel):
@@ -38,8 +42,8 @@ def create_app(
     app = FastAPI(
         title="Masari Chat API",
         description=(
-            "Provider-free chat endpoint. Authentication and per-user limits remain "
-            "active; AI generation is unavailable and not configured."
+            "Authenticated chat endpoint with per-user limits. Generation requires "
+            "the explicitly enabled evidence-grounded entrypoint."
         ),
         version="1.0.0",
     )
@@ -92,8 +96,7 @@ def create_app(
         },
     )
     async def chat(request: ChatRequest) -> dict[str, str]:
-        # Only offline tests inject a fake generator. The production entrypoint
-        # below has no transport, credential lookup, environment switch or fallback.
+        # The default entrypoint has no generator; the opt-in entrypoint supplies it.
         if generator is None:
             raise HTTPException(status_code=503, detail=AI_UNAVAILABLE_MESSAGE)
         try:

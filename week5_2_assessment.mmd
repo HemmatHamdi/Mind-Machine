@@ -1,0 +1,32 @@
+flowchart TD
+    A0([From main flow: Take the interest check-in]) --> A1["Intro: 12 short questions in 4 groups.<br/>You can skip any question, go back, or stop at any time.<br/>Parents and counselors: answer together with the student, not for them"]
+    A1 --> Q[/"Question n of 12 with answer cards and a Not sure or Skip button"/]
+    Q --> V{"Valid answer?"}
+    V -->|Yes| SAVE["Save the answer and update What I understood so far"]
+    V -->|"No: typed text or incomplete choice"| IV{"Invalid attempts on this question: fewer than 2?"}
+    IV -->|Yes| HINT["Error recovery: show a short hint and re-ask the same question with the answer cards"]
+    HINT --> Q
+    IV -->|"No: 2 reached"| OFF["Offer to skip this question and mark it as skipped"]
+    OFF --> NXT
+    Q -->|Not sure or Skip| SK["Mark as skipped. Not counted in scoring"]
+    SK --> NXT
+    Q -->|Back| PREV["Show the previous question with its saved answer, which can be edited.<br/>On question 1, stay on question 1"]
+    PREV --> Q
+    Q -->|Stop| EXIT([Return to hub. Answers are kept for this session])
+    SAVE --> NXT{"More questions?"}
+    NXT -->|Yes| Q
+    NXT -->|No| CNT{"How many questions were answered?"}
+    CNT -->|"6 to 12"| OKN["Show how many were skipped, if any"]
+    OKN --> SCORE
+    CNT -->|"1 to 5"| WARN["Warning: most questions were skipped, so the suggestions may be less reliable"]
+    WARN --> WQ[["Quick replies: Go back and answer more / Show anyway with a low-accuracy notice / Return to hub"]]
+    WQ -->|Go back and answer more| Q
+    WQ -->|Show anyway with a low-accuracy notice| SCORE
+    WQ -->|Return to hub| EXIT
+    CNT -->|0| ZERO["No answers, so no suggestions can be made"]
+    ZERO --> WQ0[["Quick replies: Start the questions / Return to hub"]]
+    WQ0 -->|Start the questions| Q
+    WQ0 -->|Return to hub| EXIT
+    SCORE["Run the rule-based scoring (deterministic)"] --> OK{"Scoring succeeded?"}
+    OK -->|Yes| OUT([To main flow: Suggestions])
+    OK -->|No| ERRX([To main flow: Subflow C Technical error recovery])

@@ -1,0 +1,79 @@
+flowchart TB
+    subgraph UI["INTERFACE LAYER - React (Vite) single-page app. Arabic RTL by default, English option"]
+        direction LR
+        UI1["Screens: Understand cards, Pathway cards and comparison, Interest check-in, Suggestions and Reasons panel, Guide chat, Notes"]
+        UI2["Optional role selector: changes wording only, not sent to the backend"]
+        UI3[("Session state in browser memory: answers, factor weights, notes")]
+        UI4["SAFEGUARD: disclosure and privacy notice, unverified details flagged, fallback message on errors and time-outs"]
+        UI5["PRINCIPLE FEATURE (interface side): edit answers, change factor importance, skip, undo, Simple wording switch"]
+        UI6["Thumbs-down with optional reason, Report wrong information (depends on proposed feature)"]
+    end
+
+    subgraph BE["BACKEND LAYER - Python / FastAPI. API key in an environment variable"]
+        API["FastAPI app: receives requests, routes them to the three parts, returns results or errors"]
+        SE["PRINCIPLE FEATURE: Scoring engine. Deterministic rules. Re-runs on edited answers and factor weights. Outputs fit bands, matched factors, mismatches, uncertainty. No LLM"]
+        subgraph GE["Guide endpoint"]
+            G1["SAFEGUARD input: rule check (decide for the user, predict ability, admission or success, best pathway). Rule-based distress check (proposed, pending Week 4 update)"]
+            G2["Retrieval: BM25 keyword search"]
+            G3["PRINCIPLE FEATURE: Prompt builder with Simple wording style option. System prompt repeats the rules. Retrieved passages only"]
+            G4["Model adapter: one automatic retry, time-out, fallback model switch (planned)"]
+            G5["SAFEGUARD output: every cited Source ID must exist. Weak evidence gives I am not sure and referral to the counselor or the Ministry"]
+        end
+        LOG["Logging: anonymous feedback and test logs only"]
+    end
+
+    subgraph MD["MODEL LAYER - External service"]
+        GEM["Google Gemini API, Flash-class, free tier. Writes guide answers and Simple wording rewrites only. Never ranks pathways"]
+        FL["Flash-Lite: fallback if the quota is cut (planned)"]
+    end
+
+    subgraph KS["KNOWLEDGE SOURCES - Internal data stores"]
+        J[("Pathway data JSON: article, source link, date checked, verification flag")]
+        P[("Passages and BM25 index: a few dozen short passages with Source IDs")]
+    end
+
+    SRC["External source: Decrees 150 of 2026 and 213 of 2025. Verification against the Official Gazette is pending"]
+    OFF["OFFLINE EVALUATION, not part of runtime: evaluation script, test set of 30+ prompts, scripted edit cases"]
+
+    UI1 <-->|"Keep and restore session state"| UI3
+    UI2 -.->|"Wording only"| UI1
+    UI1 -->|"Request cards and overview content"| API
+    UI5 ==>|"Edited answers and factor weights"| API
+    UI1 -->|"Submit answers"| API
+    UI1 -->|"Ask a question or Simple wording"| API
+    UI6 -->|"Send feedback"| API
+    API -->|"Error or time-out"| UI4
+    API -->|"Suggestions, reasons, answers"| UI1
+
+    API ==>|"Score and re-score"| SE
+    SE -->|"Read pathway records"| J
+    API -->|"Read card and overview content"| J
+    API -->|"Guide question"| G1
+    G1 -->|"Refused or distress: fixed message"| API
+    G1 -->|"Allowed"| G2
+    G2 -->|"Search"| P
+    P -->|"Passages with Source IDs"| G2
+    G2 -->|"Relevant passages"| G3
+    G2 -->|"No relevant evidence"| G5
+    G3 -->|"Prompt with passages"| G4
+    G4 -->|"Model request"| GEM
+    GEM -->|"Draft answer"| G4
+    G4 -.->|"Quota cut: switch"| FL
+    G4 -->|"Draft answer"| G5
+    G5 -->|"Checked answer with Source IDs"| API
+    API -->|"Store feedback"| LOG
+
+    SRC -.->|"Team-written records"| J
+    SRC -.->|"Team-selected passages"| P
+    OFF -.->|"Runs scripted tests against"| API
+
+    classDef principle fill:#FFF4CC,stroke:#B8860B,stroke-width:4px,color:#000
+    classDef safeguard fill:#FDE2E2,stroke:#C0392B,stroke-width:2px,color:#000
+    classDef external fill:#E8E8E8,stroke:#555,stroke-dasharray:5 3,color:#000
+    classDef store fill:#E3F2FD,stroke:#1565C0,color:#000
+    classDef offline fill:#F3E5F5,stroke:#6A1B9A,stroke-dasharray:5 3,color:#000
+    class SE,UI5,G3 principle
+    class UI4,G1,G5 safeguard
+    class GEM,FL,SRC external
+    class J,P,UI3 store
+    class OFF offline
